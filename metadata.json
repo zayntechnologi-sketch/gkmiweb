@@ -1,0 +1,6 @@
+{
+  "name": "Gereja Modern",
+  "description": "Website portal Gereja Modern dengan jadwal ibadah, pelayanan, kegiatan komunitas, dan pendaftaran kelas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

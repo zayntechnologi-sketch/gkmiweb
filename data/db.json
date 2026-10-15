@@ -1,0 +1,111 @@
+{
+  "registrations": [
+    {
+      "id": "reg_default_1",
+      "name": "Andi Saputra",
+      "email": "andi.saputra@example.com",
+      "whatsapp": "+6281234567890",
+      "eventId": "kelas_dasar_kekristenan",
+      "eventTitle": "Kelas Dasar Kekristenan",
+      "createdAt": "2026-05-22T18:08:40.089Z"
+    },
+    {
+      "id": "reg_default_2",
+      "name": "Siti Rahma",
+      "email": "siti.rahma@example.com",
+      "whatsapp": "+6281987654321",
+      "eventId": "kelas_dasar_kekristenan",
+      "eventTitle": "Kelas Dasar Kekristenan",
+      "createdAt": "2026-05-23T18:08:40.090Z"
+    }
+  ],
+  "worshipSessions": [
+    {
+      "id": "session_1",
+      "title": "Ibadah Umum",
+      "time": "08:00 WIB",
+      "location": "Gereja GKMI ICHTUS Lantai 2"
+    },
+    {
+      "id": "session_2",
+      "title": "Ibadah Komisi Anak",
+      "time": "08:00 WIB",
+      "location": "Gereja GKMI ICHTUS Lantai 1"
+    },
+    {
+      "id": "session_3",
+      "title": "Ibadah Pemuda (Youth)",
+      "time": "10:00 WIB",
+      "location": "Gereja GKMI ICHTUS Lantai 2"
+    }
+  ],
+  "churchEvents": [
+    {
+      "id": "event_ybjb7oh",
+      "title": "aaa",
+      "category": "DIGITAL",
+      "date": "28 mei 2026",
+      "fullDate": "aaa",
+      "description": "aaa",
+      "timeRange": "aaa",
+      "location": "aaa",
+      "trainer": "aaa",
+      "image": "/uploads/img_1779825973159_s75sg.jpg"
+    },
+    {
+      "id": "event_t02se3m",
+      "title": "tes",
+      "category": "RETREAT",
+      "date": "aaa",
+      "fullDate": "29 Mei 2026",
+      "description": "aa",
+      "timeRange": "aa",
+      "location": "aa",
+      "trainer": "aaa",
+      "image": "/uploads/img_1779828725004_17tbo.png"
+    }
+  ],
+  "theme": {
+    "primaryColor": "#4f46e5",
+    "secondaryColor": "#6366f1",
+    "accentColor": "#fbbf24",
+    "backgroundColor": "#f8fafc",
+    "textColor": "#0f172a",
+    "fontFamily": "Inter",
+    "weeklyTheme": "Keluarga Kristen yang Menjadi Teladan"
+  },
+  "serviceItems": [
+    {
+      "id": "srv_1",
+      "title": "Connect Groups",
+      "description": "Bertumbuh bersama dalam kelompok kecil yang penuh kehangatan dan kasih.",
+      "schedule": "Setiap Jumat, 19:00 WIB",
+      "location": "Seluruh wilayah Jakarta",
+      "icon": "Users"
+    },
+    {
+      "id": "srv_2",
+      "title": "Ignite Youth Service",
+      "description": "Ibadah yang didesain khusus untuk jiwa muda. Pujian dinamis dan firman relevan.",
+      "schedule": "Setiap Sabtu, 17:00 WIB",
+      "location": "Ruang Serbaguna",
+      "icon": "Sparkles"
+    },
+    {
+      "id": "srv_3",
+      "title": "Doa Malam",
+      "description": "Bersama-sama mencari wajah Tuhan dalam pujian dan doa penyembahan.",
+      "schedule": "Setiap Rabu, 19:00 WIB",
+      "location": "Ruang Serbaguna",
+      "icon": "Heart"
+    },
+    {
+      "id": "srv_rsivddx",
+      "title": "aaaaaa",
+      "description": "aaaaaaaaa",
+      "schedule": "setaip jumat,19:00",
+      "location": "aaaaaaaa",
+      "icon": "Heart"
+    }
+  ]
+}
