@@ -26,6 +26,7 @@ function nextNomor(list: NatalPeserta[]): string {
 export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged }: Props) {
   const [nama, setNama] = useState("");
   const [nomor, setNomor] = useState("");
+  const [nomorTouched, setNomorTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -33,9 +34,8 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
   const [preview, setPreview] = useState<{ p: NatalPeserta; url: string } | null>(null);
 
   useEffect(() => {
-    if (!nomor) setNomor(nextNomor(peserta));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peserta]);
+    if (!nomorTouched) setNomor(nextNomor(peserta));
+  }, [peserta, nomorTouched]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -61,6 +61,7 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
     setPeserta(prev => {
       const nextList = [...prev.filter(p => p.id !== data.id), data];
       setNomor(nextNomor(nextList));
+      setNomorTouched(false);
       return nextList;
     });
     setNama("");
@@ -104,7 +105,7 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
             <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">No. Peserta</label>
             <input
               value={nomor}
-              onChange={e => setNomor(e.target.value)}
+              onChange={e => { setNomor(e.target.value); setNomorTouched(true); }}
               placeholder="001"
               className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
             />

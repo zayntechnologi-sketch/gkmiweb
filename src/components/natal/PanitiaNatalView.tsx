@@ -34,12 +34,20 @@ export default function PanitiaNatalView({ onBack }: Props) {
 
   useEffect(() => { if (user) refresh(); }, [user, refresh]);
 
-  // Daftar hadir auto-refresh agar sinkron dengan petugas scan di perangkat lain
+  // Auto-refresh setiap 3 detik di semua tab (Peserta Undangan & Daftar Hadir)
+  // agar perubahan dari laptop langsung tampil otomatis di HP tanpa perlu reload
   useEffect(() => {
-    if (!user || tab !== "hadir") return;
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
-  }, [user, tab, refresh]);
+    if (!user) return;
+    const t = setInterval(refresh, 3000);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [user, refresh]);
 
   if (checking) {
     return (
