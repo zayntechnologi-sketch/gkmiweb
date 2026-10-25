@@ -107,5 +107,34 @@
       "location": "aaaaaaaa",
       "icon": "Heart"
     }
+  ],
+  "natalPeserta": [
+    {
+      "id": "ntl_rwbvyg44j",
+      "nama": "tes",
+      "nomor": "001",
+      "kode": "NTL-SRUCS4GV12",
+      "hadir": true,
+      "waktuHadir": "2026-10-25T21:48:59.149Z",
+      "createdAt": "2026-10-25T21:46:42.068Z"
+    },
+    {
+      "id": "ntl_4k5u2xpww",
+      "nama": "abc",
+      "nomor": "002",
+      "kode": "NTL-9ID5NS7DZN",
+      "hadir": true,
+      "waktuHadir": "2026-10-25T21:49:35.509Z",
+      "createdAt": "2026-10-25T21:49:12.035Z"
+    },
+    {
+      "id": "ntl_cxhpgh74j",
+      "nama": "abcd",
+      "nomor": "003",
+      "kode": "NTL-ULX8USII9G",
+      "hadir": true,
+      "waktuHadir": "2026-10-25T21:50:06.020Z",
+      "createdAt": "2026-10-25T21:49:42.749Z"
+    }
   ]
 }

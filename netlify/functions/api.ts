@@ -55,6 +55,45 @@ function randomCode() {
 }
 const stripId = ({ _id, ...rest }: any) => rest;
 
+async function getSheetWebhookUrl(db: any): Promise<string> {
+  try {
+    const doc = await db.collection("settings").findOne({ key: "natalSheetWebhook" });
+    if (doc && typeof doc.value === "string") return doc.value;
+  } catch {}
+  return process.env.NATAL_SHEET_WEBHOOK_URL || "";
+}
+
+async function syncToGoogleSheet(db: any, trigger: string): Promise<{ ok: boolean; message: string }> {
+  const url = (await getSheetWebhookUrl(db)).trim();
+  if (!url) return { ok: false, message: "URL Webhook Google Spreadsheet belum diatur." };
+  try {
+    const docs = await db.collection("natalPeserta").find({}).toArray();
+    const sorted = docs.map(stripId).sort((a: any, b: any) =>
+      String(a.nomor).localeCompare(String(b.nomor), undefined, { numeric: true, sensitivity: "base" })
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trigger,
+        updatedAt: new Date().toISOString(),
+        total: sorted.length,
+        hadir: sorted.filter((p: any) => p.hadir).length,
+        peserta: sorted,
+      }),
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return { ok: false, message: `Webhook merespons HTTP ${res.status}` };
+    return { ok: true, message: "Spreadsheet berhasil diperbarui." };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || "Gagal menghubungi Google Spreadsheet." };
+  }
+}
+
 // ── Response helpers ─────────────────────────────────────────────────────────
 const json = (statusCode: number, body: unknown) => ({
   statusCode,
@@ -314,6 +353,7 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
         createdAt: new Date().toISOString(),
       };
       await db.collection("natalPeserta").insertOne({ ...doc });
+      await syncToGoogleSheet(db, "add").catch(() => {});
       return json(201, doc);
     }
 
@@ -329,7 +369,34 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
       }
       const waktuHadir = new Date().toISOString();
       await col.updateOne({ kode }, { $set: { hadir: true, waktuHadir } });
+      await syncToGoogleSheet(db, "checkin").catch(() => {});
       return json(200, { status: "ok", peserta: { ...stripId(peserta), hadir: true, waktuHadir } });
+    }
+
+    if (path === "/api/natal/sheet-config" && method === "GET") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      return json(200, { webhookUrl: await getSheetWebhookUrl(db) });
+    }
+
+    if (path === "/api/natal/sheet-config" && method === "PUT") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const webhookUrl = String(body.webhookUrl || "").trim();
+      await db.collection("settings").updateOne(
+        { key: "natalSheetWebhook" },
+        { $set: { key: "natalSheetWebhook", value: webhookUrl } },
+        { upsert: true }
+      );
+      const sync = webhookUrl
+        ? await syncToGoogleSheet(db, "config")
+        : { ok: true, message: "Sinkronisasi spreadsheet dinonaktifkan." };
+      return json(200, { webhookUrl, sync });
+    }
+
+    if (path === "/api/natal/sheet-sync" && method === "POST") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const sync = await syncToGoogleSheet(db, "manual");
+      if (!sync.ok) return json(400, { error: sync.message });
+      return json(200, sync);
     }
 
     const ntlMatch = path.match(/^\/api\/natal\/peserta\/([^/]+)$/);
@@ -352,11 +419,13 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
         if (update.nama === "" || update.nomor === "") return json(400, { error: "Nama dan nomor peserta wajib diisi." });
         const result = await col.findOneAndUpdate({ id }, { $set: update }, { returnDocument: "after" });
         if (!result) return json(404, { error: "Peserta tidak ditemukan." });
+        await syncToGoogleSheet(db, "update").catch(() => {});
         return json(200, stripId(result));
       }
       if (method === "DELETE") {
         const result = await col.deleteOne({ id });
         if (result.deletedCount === 0) return json(404, { error: "Peserta tidak ditemukan." });
+        await syncToGoogleSheet(db, "delete").catch(() => {});
         return json(200, { success: true });
       }
     }

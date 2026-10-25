@@ -660,6 +660,62 @@ async function saveLocalPeserta(list: any[]) {
   writeLocalDb(db);
 }
 
+// Ambil/simpan URL Webhook Google Spreadsheet
+async function getSheetWebhookUrl(): Promise<string> {
+  if (isMongo && mongoDb) {
+    try {
+      const doc = await mongoDb.collection("settings").findOne({ key: "natalSheetWebhook" });
+      if (doc && typeof doc.value === "string") return doc.value;
+    } catch {}
+  } else {
+    const db = readLocalDb();
+    if (typeof db.natalSheetWebhook === "string") return db.natalSheetWebhook;
+  }
+  return process.env.NATAL_SHEET_WEBHOOK_URL || "";
+}
+
+async function setSheetWebhookUrl(url: string) {
+  if (isMongo && mongoDb) {
+    await mongoDb.collection("settings").updateOne(
+      { key: "natalSheetWebhook" },
+      { $set: { key: "natalSheetWebhook", value: url } },
+      { upsert: true }
+    );
+  } else {
+    const db = readLocalDb();
+    db.natalSheetWebhook = url;
+    writeLocalDb(db);
+  }
+}
+
+// Kirim seluruh daftar peserta terbaru (terurut nomor) ke Google Spreadsheet
+async function syncToGoogleSheet(trigger: string): Promise<{ ok: boolean; message: string }> {
+  const url = (await getSheetWebhookUrl()).trim();
+  if (!url) return { ok: false, message: "URL Webhook Google Spreadsheet belum diatur." };
+  try {
+    const list = await loadPeserta();
+    const sorted = [...list].sort((a, b) =>
+      String(a.nomor).localeCompare(String(b.nomor), undefined, { numeric: true, sensitivity: "base" })
+    );
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trigger,
+        updatedAt: new Date().toISOString(),
+        total: sorted.length,
+        hadir: sorted.filter(p => p.hadir).length,
+        peserta: sorted,
+      }),
+      redirect: "follow",
+    });
+    if (!res.ok) return { ok: false, message: `Webhook merespons HTTP ${res.status}` };
+    return { ok: true, message: "Spreadsheet berhasil diperbarui." };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || "Gagal menghubungi Google Spreadsheet." };
+  }
+}
+
 app.post("/api/panitia/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username dan password wajib diisi." });
@@ -702,6 +758,7 @@ app.post("/api/natal/peserta", panitiaMiddleware, async (req, res) => {
   } else {
     await saveLocalPeserta([...list, doc]);
   }
+  syncToGoogleSheet("add").catch(() => {});
   res.status(201).json(doc);
 });
 
@@ -719,6 +776,7 @@ app.post("/api/natal/checkin", panitiaMiddleware, async (req, res) => {
   } else {
     await saveLocalPeserta(list.map(p => (p.kode === kode ? updated : p)));
   }
+  syncToGoogleSheet("checkin").catch(() => {});
   res.json({ status: "ok", peserta: updated });
 });
 
@@ -745,6 +803,7 @@ app.put("/api/natal/peserta/:id", panitiaMiddleware, async (req, res) => {
   } else {
     await saveLocalPeserta(list.map(p => (p.id === id ? updated : p)));
   }
+  syncToGoogleSheet("update").catch(() => {});
   res.json(updated);
 });
 
@@ -753,13 +812,32 @@ app.delete("/api/natal/peserta/:id", panitiaMiddleware, async (req, res) => {
   if (isMongo && mongoDb) {
     const result = await mongoDb.collection("natalPeserta").deleteOne({ id });
     if (result.deletedCount === 0) return res.status(404).json({ error: "Peserta tidak ditemukan." });
+    syncToGoogleSheet("delete").catch(() => {});
     return res.json({ success: true });
   }
   const list = await loadPeserta();
   const next = list.filter(p => p.id !== id);
   if (next.length === list.length) return res.status(404).json({ error: "Peserta tidak ditemukan." });
   await saveLocalPeserta(next);
+  syncToGoogleSheet("delete").catch(() => {});
   res.json({ success: true });
+});
+
+app.get("/api/natal/sheet-config", panitiaMiddleware, async (_req, res) => {
+  res.json({ webhookUrl: await getSheetWebhookUrl() });
+});
+
+app.put("/api/natal/sheet-config", panitiaMiddleware, async (req, res) => {
+  const webhookUrl = String(req.body.webhookUrl || "").trim();
+  await setSheetWebhookUrl(webhookUrl);
+  const sync = webhookUrl ? await syncToGoogleSheet("config") : { ok: true, message: "Sinkronisasi spreadsheet dinonaktifkan." };
+  res.json({ webhookUrl, sync });
+});
+
+app.post("/api/natal/sheet-sync", panitiaMiddleware, async (_req, res) => {
+  const sync = await syncToGoogleSheet("manual");
+  if (!sync.ok) return res.status(400).json({ error: sync.message });
+  res.json(sync);
 });
 
 // Configure Vite or production static files serving
