@@ -199,7 +199,11 @@ async function syncToGoogleSheet(db: any, trigger: string): Promise<{ ok: boolea
 // ── Response helpers ─────────────────────────────────────────────────────────
 const json = (statusCode: number, body: unknown) => ({
   statusCode,
-  headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  headers: {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+  },
   body: JSON.stringify(body),
 });
 

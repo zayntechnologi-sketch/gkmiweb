@@ -58,9 +58,11 @@ export function usePanitiaAuth() {
 
   const authFetch = useCallback((url: string, opts: RequestInit = {}) => {
     return fetch(url, {
+      cache: "no-store",
       ...opts,
       headers: {
         "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
         ...(opts.headers || {}),
         "x-panitia-token": token || ""
       }

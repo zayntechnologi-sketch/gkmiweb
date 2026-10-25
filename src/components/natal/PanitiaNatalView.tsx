@@ -99,9 +99,9 @@ export default function PanitiaNatalView({ onBack }: Props) {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {tab === "peserta" && <PesertaPanel peserta={peserta} authFetch={authFetch} onChanged={refresh} />}
+        {tab === "peserta" && <PesertaPanel peserta={peserta} setPeserta={setPeserta} authFetch={authFetch} onChanged={refresh} />}
         {tab === "scan" && <ScanPanel authFetch={authFetch} onCheckedIn={refresh} />}
-        {tab === "hadir" && <DaftarHadirPanel peserta={peserta} loading={loading} onRefresh={refresh} authFetch={authFetch} />}
+        {tab === "hadir" && <DaftarHadirPanel peserta={peserta} setPeserta={setPeserta} loading={loading} onRefresh={refresh} authFetch={authFetch} />}
       </main>
     </div>
   );

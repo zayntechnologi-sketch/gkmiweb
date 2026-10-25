@@ -9,6 +9,7 @@ import { downloadDaftarHadirExcel } from "./excel";
 
 interface Props {
   peserta: NatalPeserta[];
+  setPeserta: React.Dispatch<React.SetStateAction<NatalPeserta[]>>;
   loading: boolean;
   onRefresh: () => void;
   authFetch: (url: string, opts?: RequestInit) => Promise<Response>;
@@ -43,7 +44,7 @@ const APPS_SCRIPT_CODE = `function doPost(e) {
   return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
 }`;
 
-export default function DaftarHadirPanel({ peserta, loading, onRefresh, authFetch }: Props) {
+export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefresh, authFetch }: Props) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("semua");
 
@@ -90,7 +91,9 @@ export default function DaftarHadirPanel({ peserta, loading, onRefresh, authFetc
       method: "PUT",
       body: JSON.stringify({ hadir: !p.hadir })
     });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) { alert("Gagal memperbarui status."); return; }
+    setPeserta(prev => prev.map(item => (item.id === p.id ? { ...item, ...data } : item)));
     onRefresh();
   };
 

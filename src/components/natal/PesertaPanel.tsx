@@ -5,6 +5,7 @@ import { buildCardDataUrl, downloadDataUrl, printCards, safeFilename, sortByNomo
 
 interface Props {
   peserta: NatalPeserta[];
+  setPeserta: React.Dispatch<React.SetStateAction<NatalPeserta[]>>;
   authFetch: (url: string, opts?: RequestInit) => Promise<Response>;
   onChanged: () => void;
 }
@@ -22,7 +23,7 @@ function nextNomor(list: NatalPeserta[]): string {
   return String(max + 1).padStart(pad, "0");
 }
 
-export default function PesertaPanel({ peserta, authFetch, onChanged }: Props) {
+export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged }: Props) {
   const [nama, setNama] = useState("");
   const [nomor, setNomor] = useState("");
   const [saving, setSaving] = useState(false);
@@ -56,8 +57,11 @@ export default function PesertaPanel({ peserta, authFetch, onChanged }: Props) {
     const data = await res.json().catch(() => ({}));
     setSaving(false);
     if (!res.ok) { setError(data.error || "Gagal menambahkan peserta."); return; }
+    // Langsung tambahkan ke daftar di layar tanpa perlu menunggu refresh
+    const nextList = [...peserta.filter(p => p.id !== data.id), data];
+    setPeserta(nextList);
     setNama("");
-    setNomor(nextNomor([...peserta, data]));
+    setNomor(nextNomor(nextList));
     onChanged();
   };
 
@@ -69,6 +73,7 @@ export default function PesertaPanel({ peserta, authFetch, onChanged }: Props) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { alert(data.error || "Gagal menyimpan perubahan."); return; }
+    setPeserta(prev => prev.map(p => (p.id === editing.id ? { ...p, ...data } : p)));
     setEditing(null);
     onChanged();
   };
@@ -77,6 +82,7 @@ export default function PesertaPanel({ peserta, authFetch, onChanged }: Props) {
     if (!confirm(`Hapus peserta "${p.nama}" (No. ${p.nomor})? Barcode-nya tidak akan berlaku lagi.`)) return;
     const res = await authFetch(`/api/natal/peserta/${p.id}`, { method: "DELETE" });
     if (!res.ok) { alert("Gagal menghapus peserta."); return; }
+    setPeserta(prev => prev.filter(item => item.id !== p.id));
     onChanged();
   };
 
