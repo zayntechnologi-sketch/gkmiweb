@@ -2,18 +2,106 @@ import { MongoClient } from "mongodb";
 import jwt from "jsonwebtoken";
 import type { Handler, HandlerEvent, HandlerContext } from "@netlify/functions";
 
-// ── MongoDB connection (reused across warm invocations) ─────────────────────
+// ── MongoDB connection (reused across warm invocations) + Memory Fallback ───
 let client: MongoClient | null = null;
 let dbReady = false;
 
-async function getDb() {
+const memoryStore: Record<string, any[]> = {
+  admins: [],
+  panitiaAccounts: [],
+  worshipSessions: [
+    { id: "session_1", title: "Ibadah Umum 1", time: "07:00 WIB", location: "Auditorium Utama" },
+    { id: "session_2", title: "Ibadah Umum 2 & Sekolah Minggu", time: "09:30 WIB", location: "Auditorium Utama & Ruang Anak" },
+    { id: "session_3", title: "Ibadah Pemuda (Youth)", time: "16:00 WIB", location: "Ruang Serbaguna" },
+    { id: "session_4", title: "Ibadah Umum 3", time: "18:30 WIB", location: "Auditorium Utama" },
+  ],
+  churchEvents: [],
+  serviceItems: [],
+  registrations: [],
+  settings: [],
+  natalPeserta: [],
+};
+
+function matchesFilter(doc: any, filter: Record<string, any> = {}): boolean {
+  for (const [k, v] of Object.entries(filter)) {
+    if (v && typeof v === "object" && "$ne" in v) {
+      if (doc[k] === v.$ne) return false;
+    } else if (doc[k] !== v) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getMemoryDb() {
+  return {
+    isMemory: true,
+    collection(name: string) {
+      if (!memoryStore[name]) memoryStore[name] = [];
+      const col = memoryStore[name];
+      return {
+        find(filter: Record<string, any> = {}) {
+          let results = col.filter(d => matchesFilter(d, filter));
+          return {
+            sort(sortSpec: Record<string, number>) {
+              const [[field, dir]] = Object.entries(sortSpec);
+              results = [...results].sort((a, b) =>
+                a[field] < b[field] ? -dir : a[field] > b[field] ? dir : 0
+              );
+              return { toArray: async () => results };
+            },
+            toArray: async () => results,
+          };
+        },
+        findOne: async (filter: Record<string, any>) => col.find(d => matchesFilter(d, filter)) || null,
+        insertOne: async (doc: any) => {
+          col.push({ ...doc });
+          return { insertedId: doc.id || Date.now().toString() };
+        },
+        updateOne: async (filter: Record<string, any>, update: any, opts?: { upsert?: boolean }) => {
+          const idx = col.findIndex(d => matchesFilter(d, filter));
+          const patch = update?.$set || update;
+          if (idx !== -1) {
+            col[idx] = { ...col[idx], ...patch };
+            return { matchedCount: 1, modifiedCount: 1 };
+          }
+          if (opts?.upsert) {
+            col.push({ ...filter, ...patch });
+            return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+          }
+          return { matchedCount: 0, modifiedCount: 0 };
+        },
+        findOneAndUpdate: async (filter: Record<string, any>, update: any) => {
+          const idx = col.findIndex(d => matchesFilter(d, filter));
+          if (idx === -1) return null;
+          const patch = update?.$set || update;
+          col[idx] = { ...col[idx], ...patch };
+          return col[idx];
+        },
+        deleteOne: async (filter: Record<string, any>) => {
+          const idx = col.findIndex(d => matchesFilter(d, filter));
+          if (idx === -1) return { deletedCount: 0 };
+          col.splice(idx, 1);
+          return { deletedCount: 1 };
+        },
+      };
+    },
+  };
+}
+
+async function getDb(): Promise<any> {
   if (dbReady && client) return client.db();
   const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error("MONGODB_URI not set");
-  client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
-  await client.connect();
-  dbReady = true;
-  return client.db();
+  if (!uri || uri === "disabled") return getMemoryDb();
+  try {
+    client = new MongoClient(uri, { serverSelectionTimeoutMS: 4000 });
+    await client.connect();
+    dbReady = true;
+    return client.db();
+  } catch (err) {
+    console.warn("[DB] Gagal terhubung ke MongoDB, menggunakan penyimpanan sementara (memory):", (err as any)?.message);
+    return getMemoryDb();
+  }
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
