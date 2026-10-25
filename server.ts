@@ -692,24 +692,44 @@ async function setSheetWebhookUrl(url: string) {
 async function syncToGoogleSheet(trigger: string): Promise<{ ok: boolean; message: string }> {
   const url = (await getSheetWebhookUrl()).trim();
   if (!url) return { ok: false, message: "URL Webhook Google Spreadsheet belum diatur." };
+  if (url.endsWith("/dev")) {
+    return {
+      ok: false,
+      message: "URL berakhiran /dev hanya untuk pengujian internal. Gunakan URL Web App berakhiran /exec dari menu Deploy → Manage deployments.",
+    };
+  }
   try {
     const list = await loadPeserta();
     const sorted = [...list].sort((a, b) =>
       String(a.nomor).localeCompare(String(b.nomor), undefined, { numeric: true, sensitivity: "base" })
     );
+    const payload = JSON.stringify({
+      trigger,
+      updatedAt: new Date().toISOString(),
+      total: sorted.length,
+      hadir: sorted.filter(p => p.hadir).length,
+      peserta: sorted,
+    });
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        trigger,
-        updatedAt: new Date().toISOString(),
-        total: sorted.length,
-        hadir: sorted.filter(p => p.hadir).length,
-        peserta: sorted,
-      }),
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: payload,
       redirect: "follow",
     });
+    if (res.status === 401 || res.status === 403) {
+      return {
+        ok: false,
+        message: `HTTP ${res.status}: Akses ditolak oleh Google. Di Apps Script klik Deploy → Manage deployments → Edit (ikon pensil) → ubah "Who has access" menjadi "Anyone (Siapa saja)" → Deploy.`,
+      };
+    }
     if (!res.ok) return { ok: false, message: `Webhook merespons HTTP ${res.status}` };
+    const text = await res.text();
+    if (text.includes("accounts.google.com") || text.includes("ServiceLogin")) {
+      return {
+        ok: false,
+        message: `Google meminta login. Di Apps Script klik Deploy → Manage deployments → Edit (ikon pensil) → ubah "Who has access" menjadi "Anyone (Siapa saja)" → Deploy.`,
+      };
+    }
     return { ok: true, message: "Spreadsheet berhasil diperbarui." };
   } catch (err: any) {
     return { ok: false, message: err?.message || "Gagal menghubungi Google Spreadsheet." };

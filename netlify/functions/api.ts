@@ -66,6 +66,12 @@ async function getSheetWebhookUrl(db: any): Promise<string> {
 async function syncToGoogleSheet(db: any, trigger: string): Promise<{ ok: boolean; message: string }> {
   const url = (await getSheetWebhookUrl(db)).trim();
   if (!url) return { ok: false, message: "URL Webhook Google Spreadsheet belum diatur." };
+  if (url.endsWith("/dev")) {
+    return {
+      ok: false,
+      message: "URL berakhiran /dev hanya untuk pengujian internal. Gunakan URL Web App berakhiran /exec dari menu Deploy → Manage deployments.",
+    };
+  }
   try {
     const docs = await db.collection("natalPeserta").find({}).toArray();
     const sorted = docs.map(stripId).sort((a: any, b: any) =>
@@ -75,7 +81,7 @@ async function syncToGoogleSheet(db: any, trigger: string): Promise<{ ok: boolea
     const timer = setTimeout(() => controller.abort(), 4500);
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         trigger,
         updatedAt: new Date().toISOString(),
@@ -87,6 +93,12 @@ async function syncToGoogleSheet(db: any, trigger: string): Promise<{ ok: boolea
       signal: controller.signal,
     });
     clearTimeout(timer);
+    if (res.status === 401 || res.status === 403) {
+      return {
+        ok: false,
+        message: `HTTP ${res.status}: Akses ditolak oleh Google. Di Apps Script klik Deploy → Manage deployments → Edit (ikon pensil) → ubah "Who has access" menjadi "Anyone (Siapa saja)" → Deploy.`,
+      };
+    }
     if (!res.ok) return { ok: false, message: `Webhook merespons HTTP ${res.status}` };
     return { ok: true, message: "Spreadsheet berhasil diperbarui." };
   } catch (err: any) {
