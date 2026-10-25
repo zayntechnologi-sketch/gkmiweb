@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense, lazy } from "react";
 import { MenuTab, ChurchEvent, ThemeSettings } from "./types";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
@@ -11,6 +11,9 @@ import AdminView from "./components/AdminView";
 import LoginView from "./components/LoginView";
 import { useAdminAuth } from "./hooks/useAdminAuth";
 
+const PanitiaNatalView = lazy(() => import("./components/natal/PanitiaNatalView"));
+const PANITIA_PATH = "/panitia-natal";
+
 function applyThemeToRoot(theme: ThemeSettings) {
   const root = document.documentElement;
   root.style.setProperty("--theme-primary", theme.primaryColor);
@@ -22,7 +25,9 @@ function applyThemeToRoot(theme: ThemeSettings) {
 }
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<MenuTab>("beranda");
+  const [currentTab, setCurrentTab] = useState<MenuTab>(() =>
+    window.location.pathname.replace(/\/+$/, "") === PANITIA_PATH ? "panitia_natal" : "beranda"
+  );
   const [selectedEvent, setSelectedEvent] = useState<ChurchEvent | null>(null);
   const { user, checking, login } = useAdminAuth();
 
@@ -54,8 +59,20 @@ export default function App() {
   const handleTabChange = (tab: MenuTab) => {
     setCurrentTab(tab);
     setSelectedEvent(null);
+    // Halaman Panitia Natal punya URL sendiri (/panitia-natal) agar mudah dibuka langsung
+    const targetPath = tab === "panitia_natal" ? PANITIA_PATH : "/";
+    if (window.location.pathname !== targetPath) window.history.pushState(null, "", targetPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  // Halaman Panitia Natal (login & dashboard terpisah dari admin)
+  if (currentTab === "panitia_natal") {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+        <PanitiaNatalView onBack={() => handleTabChange("beranda")} />
+      </Suspense>
+    );
+  }
 
   // If accessing admin but not logged in yet (and still checking), wait
   if (currentTab === "admin" && checking) {

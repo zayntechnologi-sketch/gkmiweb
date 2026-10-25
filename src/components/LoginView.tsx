@@ -4,9 +4,20 @@ import { Lock, User, Eye, EyeOff, Shield, AlertCircle, LogIn } from "lucide-reac
 interface LoginViewProps {
   onLogin: (username: string, password: string) => Promise<string | null>;
   onBack: () => void;
+  title?: string;
+  subtitle?: string;
+  submitLabel?: string;
+  note?: string;
 }
 
-export default function LoginView({ onLogin, onBack }: LoginViewProps) {
+export default function LoginView({
+  onLogin,
+  onBack,
+  title = "Panel Admin",
+  subtitle = "GKMI ICHTUS · Manajemen Konten",
+  submitLabel = "Masuk ke Panel Admin",
+  note = "Akses terbatas untuk administrator gereja"
+}: LoginViewProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -67,8 +78,8 @@ export default function LoginView({ onLogin, onBack }: LoginViewProps) {
                   <Shield className="h-3 w-3 text-indigo-400" />
                 </div>
               </div>
-              <h1 className="font-display text-2xl font-extrabold text-white tracking-tight mt-2">Panel Admin</h1>
-              <p className="text-sm text-slate-400 mt-1">GKMI ICHTUS · Manajemen Konten</p>
+              <h1 className="font-display text-2xl font-extrabold text-white tracking-tight mt-2">{title}</h1>
+              <p className="text-sm text-slate-400 mt-1">{subtitle}</p>
             </div>
 
             {/* Error message */}
@@ -150,7 +161,7 @@ export default function LoginView({ onLogin, onBack }: LoginViewProps) {
                 ) : (
                   <>
                     <LogIn className="h-4 w-4" />
-                    <span>Masuk ke Panel Admin</span>
+                    <span>{submitLabel}</span>
                   </>
                 )}
               </button>
@@ -170,7 +181,7 @@ export default function LoginView({ onLogin, onBack }: LoginViewProps) {
 
         {/* Security note */}
         <p className="mt-4 text-center text-xs text-slate-600">
-          Akses terbatas untuk administrator gereja
+          {note}
         </p>
       </div>
 

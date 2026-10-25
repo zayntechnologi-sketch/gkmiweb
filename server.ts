@@ -40,8 +40,9 @@ function createToken(): string {
 }
 function validateToken(token: string): boolean {
   try {
-    jwt.verify(token, JWT_SECRET);
-    return true;
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    // Token panitia natal tidak boleh dipakai untuk akses admin
+    return payload?.role !== "panitia_natal";
   } catch (e) {
     return false;
   }
@@ -614,6 +615,150 @@ app.delete("/api/service-items/:id", authMiddleware, async (req, res) => {
   db.serviceItems = (db.serviceItems || []).filter((s: any) => s.id !== id);
   if (db.serviceItems.length === before) return res.status(404).json({ error: "Pelayanan tidak ditemukan." });
   writeLocalDb(db);
+  res.json({ success: true });
+});
+
+// ============================================================
+// PANITIA NATAL (login panitia, peserta undangan, check-in)
+// ============================================================
+const PANITIA_USERNAME = process.env.PANITIA_USERNAME || "panitia";
+const PANITIA_PASSWORD = process.env.PANITIA_PASSWORD || "natal2026";
+
+function decodePanitiaToken(token: string): { username: string } | null {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    return payload?.role === "panitia_natal" ? { username: payload.username } : null;
+  } catch {
+    return null;
+  }
+}
+
+function panitiaMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const token = (req.headers["x-panitia-token"] as string) || "";
+  if (!decodePanitiaToken(token)) {
+    return res.status(401).json({ error: "Unauthorized. Silakan login sebagai panitia." });
+  }
+  next();
+}
+
+function randomNatalCode() {
+  return "NTL-" + Math.random().toString(36).slice(2, 8).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+}
+
+// Helper penyimpanan peserta: MongoDB bila tersedia, jika tidak pakai db.json
+async function loadPeserta(): Promise<any[]> {
+  if (isMongo && mongoDb) {
+    const docs = await mongoDb.collection("natalPeserta").find({}).toArray();
+    return docs.map((d: any) => { const { _id, ...rest } = d; return rest; });
+  }
+  return readLocalDb().natalPeserta || [];
+}
+
+async function saveLocalPeserta(list: any[]) {
+  const db = readLocalDb();
+  db.natalPeserta = list;
+  writeLocalDb(db);
+}
+
+app.post("/api/panitia/login", async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "Username dan password wajib diisi." });
+  let ok = username === PANITIA_USERNAME && password === PANITIA_PASSWORD;
+  if (!ok && isMongo && mongoDb) {
+    const doc = await mongoDb.collection("panitiaAccounts").findOne({ username });
+    ok = !!doc && doc.password === password;
+  }
+  if (!ok) return res.status(401).json({ error: "Username atau password salah." });
+  const token = jwt.sign({ role: "panitia_natal", username }, JWT_SECRET, { expiresIn: "12h" });
+  res.json({ token, username });
+});
+
+app.get("/api/panitia/verify", (req, res) => {
+  const p = decodePanitiaToken((req.headers["x-panitia-token"] as string) || "");
+  res.json(p ? { valid: true, username: p.username } : { valid: false });
+});
+
+app.get("/api/natal/peserta", panitiaMiddleware, async (_req, res) => {
+  res.json(await loadPeserta());
+});
+
+app.post("/api/natal/peserta", panitiaMiddleware, async (req, res) => {
+  const nama = String(req.body.nama || "").trim();
+  const nomor = String(req.body.nomor || "").trim();
+  if (!nama || !nomor) return res.status(400).json({ error: "Nama dan nomor peserta wajib diisi." });
+  const list = await loadPeserta();
+  const dup = list.find(p => p.nomor === nomor);
+  if (dup) return res.status(409).json({ error: `Nomor peserta ${nomor} sudah dipakai oleh ${dup.nama}.` });
+  const doc = {
+    id: "ntl_" + Math.random().toString(36).slice(2, 11),
+    nama, nomor,
+    kode: randomNatalCode(),
+    hadir: false,
+    waktuHadir: null as string | null,
+    createdAt: new Date().toISOString()
+  };
+  if (isMongo && mongoDb) {
+    await mongoDb.collection("natalPeserta").insertOne({ ...doc });
+  } else {
+    await saveLocalPeserta([...list, doc]);
+  }
+  res.status(201).json(doc);
+});
+
+app.post("/api/natal/checkin", panitiaMiddleware, async (req, res) => {
+  const kode = String(req.body.kode || "").trim();
+  if (!kode) return res.status(400).json({ error: "Kode tidak terbaca." });
+  const list = await loadPeserta();
+  const peserta = list.find(p => p.kode === kode);
+  if (!peserta) return res.status(404).json({ error: "Barcode tidak terdaftar sebagai peserta undangan." });
+  if (peserta.hadir) return res.json({ status: "already", peserta });
+  const waktuHadir = new Date().toISOString();
+  const updated = { ...peserta, hadir: true, waktuHadir };
+  if (isMongo && mongoDb) {
+    await mongoDb.collection("natalPeserta").updateOne({ kode }, { $set: { hadir: true, waktuHadir } });
+  } else {
+    await saveLocalPeserta(list.map(p => (p.kode === kode ? updated : p)));
+  }
+  res.json({ status: "ok", peserta: updated });
+});
+
+app.put("/api/natal/peserta/:id", panitiaMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const list = await loadPeserta();
+  const current = list.find(p => p.id === id);
+  if (!current) return res.status(404).json({ error: "Peserta tidak ditemukan." });
+  const update: any = {};
+  if (req.body.nama !== undefined) update.nama = String(req.body.nama).trim();
+  if (req.body.nomor !== undefined) {
+    update.nomor = String(req.body.nomor).trim();
+    const dup = list.find(p => p.nomor === update.nomor && p.id !== id);
+    if (dup) return res.status(409).json({ error: `Nomor peserta ${update.nomor} sudah dipakai oleh ${dup.nama}.` });
+  }
+  if (update.nama === "" || update.nomor === "") return res.status(400).json({ error: "Nama dan nomor peserta wajib diisi." });
+  if (req.body.hadir !== undefined) {
+    update.hadir = !!req.body.hadir;
+    update.waktuHadir = update.hadir ? new Date().toISOString() : null;
+  }
+  const updated = { ...current, ...update };
+  if (isMongo && mongoDb) {
+    await mongoDb.collection("natalPeserta").updateOne({ id }, { $set: update });
+  } else {
+    await saveLocalPeserta(list.map(p => (p.id === id ? updated : p)));
+  }
+  res.json(updated);
+});
+
+app.delete("/api/natal/peserta/:id", panitiaMiddleware, async (req, res) => {
+  const { id } = req.params;
+  if (isMongo && mongoDb) {
+    const result = await mongoDb.collection("natalPeserta").deleteOne({ id });
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Peserta tidak ditemukan." });
+    return res.json({ success: true });
+  }
+  const list = await loadPeserta();
+  const next = list.filter(p => p.id !== id);
+  if (next.length === list.length) return res.status(404).json({ error: "Peserta tidak ditemukan." });
+  await saveLocalPeserta(next);
   res.json({ success: true });
 });
 

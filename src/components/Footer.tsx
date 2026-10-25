@@ -58,6 +58,14 @@ export default function Footer({ currentTab, onChangeTab }: FooterProps) {
                   <ChevronRight className="h-3.5 w-3.5 mr-1" /> Donasi
                 </button>
               </li>
+              <li>
+                <button 
+                  onClick={() => onChangeTab("panitia_natal")} 
+                  className="flex items-center text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer text-left"
+                >
+                  <ChevronRight className="h-3.5 w-3.5 mr-1" /> Panitia Natal
+                </button>
+              </li>
             </ul>
           </div>
 

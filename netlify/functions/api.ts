@@ -23,12 +23,37 @@ function createToken(username: string) {
   return jwt.sign({ admin: true, username }, JWT_SECRET, { expiresIn: "8h" });
 }
 function validateToken(token: string) {
-  try { jwt.verify(token, JWT_SECRET); return true; } catch { return false; }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    // Token panitia natal tidak boleh dipakai untuk akses admin
+    return payload?.role !== "panitia_natal";
+  } catch { return false; }
 }
 function isAuthorized(event: HandlerEvent) {
   const token = event.headers["x-admin-token"] || event.headers["X-Admin-Token"] || "";
   return validateToken(token);
 }
+
+// ── Panitia Natal auth ───────────────────────────────────────────────────────
+function createPanitiaToken(username: string) {
+  return jwt.sign({ role: "panitia_natal", username }, JWT_SECRET, { expiresIn: "12h" });
+}
+function decodePanitiaToken(token: string): { username: string } | null {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    if (payload?.role === "panitia_natal") return { username: payload.username };
+    return null;
+  } catch { return null; }
+}
+function isPanitia(event: HandlerEvent) {
+  const token = event.headers["x-panitia-token"] || event.headers["X-Panitia-Token"] || "";
+  return !!decodePanitiaToken(token);
+}
+function randomCode() {
+  // Kode unik yang disematkan ke dalam QR/barcode peserta
+  return "NTL-" + Math.random().toString(36).slice(2, 8).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+}
+const stripId = ({ _id, ...rest }: any) => rest;
 
 // ── Response helpers ─────────────────────────────────────────────────────────
 const json = (statusCode: number, body: unknown) => ({
@@ -241,6 +266,99 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
       const result = await db.collection("registrations").deleteOne({ id });
       if (result.deletedCount === 0) return json(404, { error: "Pendaftaran tidak ditemukan." });
       return json(200, { success: true });
+    }
+
+    // ── Panitia Natal: auth ───────────────────────────────────────────────────
+    if (path === "/api/panitia/login" && method === "POST") {
+      const { username, password } = body;
+      if (!username || !password) return json(400, { error: "Username dan password wajib diisi." });
+
+      const doc = await db.collection("panitiaAccounts").findOne({ username });
+      if (doc && doc.password === password) {
+        return json(200, { token: createPanitiaToken(username), username });
+      }
+      const envUser = process.env.PANITIA_USERNAME || "panitia";
+      const envPass = process.env.PANITIA_PASSWORD || "natal2026";
+      if (username === envUser && password === envPass) {
+        return json(200, { token: createPanitiaToken(username), username });
+      }
+      return json(401, { error: "Username atau password salah." });
+    }
+
+    if (path === "/api/panitia/verify" && method === "GET") {
+      const token = event.headers["x-panitia-token"] || "";
+      const p = decodePanitiaToken(token);
+      return json(200, p ? { valid: true, username: p.username } : { valid: false });
+    }
+
+    // ── Panitia Natal: peserta undangan ───────────────────────────────────────
+    if (path === "/api/natal/peserta" && method === "GET") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const docs = await db.collection("natalPeserta").find({}).toArray();
+      return json(200, docs.map(stripId));
+    }
+
+    if (path === "/api/natal/peserta" && method === "POST") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const nama = String(body.nama || "").trim();
+      const nomor = String(body.nomor || "").trim();
+      if (!nama || !nomor) return json(400, { error: "Nama dan nomor peserta wajib diisi." });
+      const dup = await db.collection("natalPeserta").findOne({ nomor });
+      if (dup) return json(409, { error: `Nomor peserta ${nomor} sudah dipakai oleh ${dup.nama}.` });
+      const doc = {
+        id: "ntl_" + Math.random().toString(36).slice(2, 11),
+        nama, nomor,
+        kode: randomCode(),
+        hadir: false,
+        waktuHadir: null as string | null,
+        createdAt: new Date().toISOString(),
+      };
+      await db.collection("natalPeserta").insertOne({ ...doc });
+      return json(201, doc);
+    }
+
+    if (path === "/api/natal/checkin" && method === "POST") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const kode = String(body.kode || "").trim();
+      if (!kode) return json(400, { error: "Kode tidak terbaca." });
+      const col = db.collection("natalPeserta");
+      const peserta = await col.findOne({ kode });
+      if (!peserta) return json(404, { error: "Barcode tidak terdaftar sebagai peserta undangan." });
+      if (peserta.hadir) {
+        return json(200, { status: "already", peserta: stripId(peserta) });
+      }
+      const waktuHadir = new Date().toISOString();
+      await col.updateOne({ kode }, { $set: { hadir: true, waktuHadir } });
+      return json(200, { status: "ok", peserta: { ...stripId(peserta), hadir: true, waktuHadir } });
+    }
+
+    const ntlMatch = path.match(/^\/api\/natal\/peserta\/([^/]+)$/);
+    if (ntlMatch) {
+      const id = ntlMatch[1];
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      const col = db.collection("natalPeserta");
+      if (method === "PUT") {
+        const update: any = {};
+        if (body.nama !== undefined) update.nama = String(body.nama).trim();
+        if (body.nomor !== undefined) {
+          update.nomor = String(body.nomor).trim();
+          const dup = await col.findOne({ nomor: update.nomor, id: { $ne: id } });
+          if (dup) return json(409, { error: `Nomor peserta ${update.nomor} sudah dipakai oleh ${dup.nama}.` });
+        }
+        if (body.hadir !== undefined) {
+          update.hadir = !!body.hadir;
+          update.waktuHadir = update.hadir ? new Date().toISOString() : null;
+        }
+        if (update.nama === "" || update.nomor === "") return json(400, { error: "Nama dan nomor peserta wajib diisi." });
+        const result = await col.findOneAndUpdate({ id }, { $set: update }, { returnDocument: "after" });
+        if (!result) return json(404, { error: "Peserta tidak ditemukan." });
+        return json(200, stripId(result));
+      }
+      if (method === "DELETE") {
+        const result = await col.deleteOne({ id });
+        if (result.deletedCount === 0) return json(404, { error: "Peserta tidak ditemukan." });
+        return json(200, { success: true });
+      }
     }
 
     // ── Image Upload ──────────────────────────────────────────────────────────

@@ -28,7 +28,19 @@ export interface ChurchEvent {
   image?: string;
 }
 
-export type MenuTab = "beranda" | "jadwal_ibadah" | "pelayanan" | "kegiatan" | "detail_kegiatan" | "admin";
+export type MenuTab = "beranda" | "jadwal_ibadah" | "pelayanan" | "kegiatan" | "detail_kegiatan" | "admin" | "panitia_natal";
+
+/** Peserta undangan acara Natal (dikelola oleh Panitia Natal). */
+export interface NatalPeserta {
+  id: string;
+  nama: string;
+  nomor: string;
+  /** Kode unik yang disematkan ke dalam barcode/QR peserta */
+  kode: string;
+  hadir: boolean;
+  waktuHadir: string | null;
+  createdAt: string;
+}
 
 export interface ServiceItem {
   id: string;
