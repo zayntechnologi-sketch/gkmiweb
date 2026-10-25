@@ -22,9 +22,12 @@ export default function PanitiaNatalView({ onBack }: Props) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await authFetch("/api/natal/peserta");
+      const res = await authFetch(`/api/natal/peserta?_t=${Date.now()}`);
       if (res.status === 401) { logout(); return; }
-      if (res.ok) setPeserta(await res.json());
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list)) setPeserta(list);
+      }
     } catch { /* jaringan error, coba lagi di polling berikutnya */ }
     setLoading(false);
   }, [authFetch, logout]);

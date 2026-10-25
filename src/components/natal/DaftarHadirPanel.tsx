@@ -94,7 +94,6 @@ export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefre
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { alert("Gagal memperbarui status."); return; }
     setPeserta(prev => prev.map(item => (item.id === p.id ? { ...item, ...data } : item)));
-    onRefresh();
   };
 
   const exportCsv = () => {

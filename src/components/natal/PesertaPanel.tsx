@@ -57,12 +57,13 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
     const data = await res.json().catch(() => ({}));
     setSaving(false);
     if (!res.ok) { setError(data.error || "Gagal menambahkan peserta."); return; }
-    // Langsung tambahkan ke daftar di layar tanpa perlu menunggu refresh
-    const nextList = [...peserta.filter(p => p.id !== data.id), data];
-    setPeserta(nextList);
+    // Langsung tambahkan ke daftar di layar tanpa ditimpa ulang oleh cache GET
+    setPeserta(prev => {
+      const nextList = [...prev.filter(p => p.id !== data.id), data];
+      setNomor(nextNomor(nextList));
+      return nextList;
+    });
     setNama("");
-    setNomor(nextNomor(nextList));
-    onChanged();
   };
 
   const handleSaveEdit = async () => {
@@ -75,7 +76,6 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
     if (!res.ok) { alert(data.error || "Gagal menyimpan perubahan."); return; }
     setPeserta(prev => prev.map(p => (p.id === editing.id ? { ...p, ...data } : p)));
     setEditing(null);
-    onChanged();
   };
 
   const handleDelete = async (p: NatalPeserta) => {
@@ -83,7 +83,6 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
     const res = await authFetch(`/api/natal/peserta/${p.id}`, { method: "DELETE" });
     if (!res.ok) { alert("Gagal menghapus peserta."); return; }
     setPeserta(prev => prev.filter(item => item.id !== p.id));
-    onChanged();
   };
 
   const openPreview = async (p: NatalPeserta) => {

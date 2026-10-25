@@ -755,6 +755,7 @@ app.get("/api/panitia/verify", (req, res) => {
 });
 
 app.get("/api/natal/peserta", panitiaMiddleware, async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.json(await loadPeserta());
 });
 

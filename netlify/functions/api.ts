@@ -209,8 +209,8 @@ const json = (statusCode: number, body: unknown) => ({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext) => {
-  // Extract path without the prefix /.netlify/functions/api
-  const rawPath = event.path || "/";
+  // Extract path without the prefix /.netlify/functions/api and strip any query string
+  const rawPath = (event.path || "/").split("?")[0];
   const path = rawPath.replace(/^\/?\.netlify\/functions\/api/, "") || "/";
   const method = event.httpMethod;
 
@@ -523,10 +523,12 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
           update.waktuHadir = update.hadir ? new Date().toISOString() : null;
         }
         if (update.nama === "" || update.nomor === "") return json(400, { error: "Nama dan nomor peserta wajib diisi." });
-        const result = await col.findOneAndUpdate({ id }, { $set: update }, { returnDocument: "after" });
-        if (!result) return json(404, { error: "Peserta tidak ditemukan." });
+        const existing = await col.findOne({ id });
+        if (!existing) return json(404, { error: "Peserta tidak ditemukan." });
+        await col.updateOne({ id }, { $set: update });
+        const updatedDoc = { ...stripId(existing), ...update };
         await syncToGoogleSheet(db, "update").catch(() => {});
-        return json(200, stripId(result));
+        return json(200, updatedDoc);
       }
       if (method === "DELETE") {
         const result = await col.deleteOne({ id });
