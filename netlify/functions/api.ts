@@ -17,14 +17,16 @@ async function getDb() {
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
-const JWT_SECRET = process.env.JWT_SECRET || "gkmi-secret-key-2026";
+function getJwtSecret() {
+  return process.env.JWT_SECRET || "gkmi-secret-key-2026";
+}
 
 function createToken(username: string) {
-  return jwt.sign({ admin: true, username }, JWT_SECRET, { expiresIn: "8h" });
+  return jwt.sign({ admin: true, username }, getJwtSecret(), { expiresIn: "8h" });
 }
 function validateToken(token: string) {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as any;
+    const payload = jwt.verify(token, getJwtSecret()) as any;
     // Token panitia natal tidak boleh dipakai untuk akses admin
     return payload?.role !== "panitia_natal";
   } catch { return false; }
@@ -36,11 +38,11 @@ function isAuthorized(event: HandlerEvent) {
 
 // ── Panitia Natal auth ───────────────────────────────────────────────────────
 function createPanitiaToken(username: string) {
-  return jwt.sign({ role: "panitia_natal", username }, JWT_SECRET, { expiresIn: "12h" });
+  return jwt.sign({ role: "panitia_natal", username }, getJwtSecret(), { expiresIn: "12h" });
 }
 function decodePanitiaToken(token: string): { username: string } | null {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as any;
+    const payload = jwt.verify(token, getJwtSecret()) as any;
     if (payload?.role === "panitia_natal") return { username: payload.username };
     return null;
   } catch { return null; }
