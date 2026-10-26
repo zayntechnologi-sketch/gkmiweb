@@ -1,8 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, CameraOff, CheckCircle2, AlertTriangle, XCircle, Keyboard } from "lucide-react";
+import { Camera, CameraOff, CheckCircle2, AlertTriangle, XCircle, Keyboard, Volume2, VolumeX, Mic, MicOff } from "lucide-react";
 import { NatalPeserta } from "../../types";
 import { formatWaktu } from "./barcode";
+import { playScanSound, vibrateScan, speak, unlockAudio, ScanFeedback } from "./sounds";
+
+const SOUND_KEY = "natal_scan_sound";
+const VOICE_KEY = "natal_scan_voice";
+
+interface Toast {
+  id: number;
+  kind: ScanFeedback;
+  title: string;
+  detail: string;
+}
 
 interface Props {
   authFetch: (url: string, opts?: RequestInit) => Promise<Response>;
@@ -25,6 +36,27 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [manual, setManual] = useState("");
   const [history, setHistory] = useState<{ nama: string; nomor: string; at: string; status: string }[]>([]);
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem(SOUND_KEY) !== "off");
+  const [voiceOn, setVoiceOn] = useState(() => localStorage.getItem(VOICE_KEY) === "on");
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const prefsRef = useRef({ soundOn, voiceOn });
+  prefsRef.current = { soundOn, voiceOn };
+
+  useEffect(() => { localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off"); }, [soundOn]);
+  useEffect(() => { localStorage.setItem(VOICE_KEY, voiceOn ? "on" : "off"); }, [voiceOn]);
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+  /** Suara + getar + ucapan + notifikasi pop-up untuk setiap hasil scan */
+  const notify = useCallback((kind: ScanFeedback, title: string, detail: string, spoken: string) => {
+    const { soundOn, voiceOn } = prefsRef.current;
+    if (soundOn) playScanSound(kind);
+    vibrateScan(kind);
+    if (voiceOn) setTimeout(() => speak(spoken), 350);
+    window.clearTimeout(toastTimer.current);
+    setToast({ id: Date.now(), kind, title, detail });
+    toastTimer.current = window.setTimeout(() => setToast(null), kind === "ok" ? 2500 : 3500);
+  }, []);
 
   const checkIn = useCallback(async (raw: string) => {
     const kode = raw.trim();
@@ -38,22 +70,29 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
       const res = await authFetch("/api/natal/checkin", { method: "POST", body: JSON.stringify({ kode }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResult({ type: "error", message: data.error || "Gagal memproses barcode." });
+        const message = data.error || "Gagal memproses barcode.";
+        setResult({ type: "error", message });
+        setHistory(h => [{ nama: "Barcode tidak valid", nomor: "-", at: new Date().toISOString(), status: "error" }, ...h].slice(0, 10));
+        notify("error", "Scan Gagal", message, "Barcode tidak terdaftar");
       } else {
         const p: NatalPeserta = data.peserta;
-        setResult({ type: data.status === "already" ? "already" : "ok", peserta: p });
+        const already = data.status === "already";
+        setResult({ type: already ? "already" : "ok", peserta: p });
         setHistory(h => [{ nama: p.nama, nomor: p.nomor, at: new Date().toISOString(), status: data.status }, ...h].slice(0, 10));
-        if (data.status === "ok") {
-          navigator.vibrate?.(150);
+        if (already) {
+          notify("already", "Sudah Scan Hadir", `${p.nama} (No. ${p.nomor}) sudah check-in pukul ${formatWaktu(p.waktuHadir)}`, `${p.nama} sudah hadir`);
+        } else {
+          notify("ok", "Berhasil Hadir", `${p.nama} · No. ${p.nomor}`, `Selamat datang, ${p.nama}`);
           onCheckedIn();
         }
       }
     } catch {
       setResult({ type: "error", message: "Tidak dapat terhubung ke server." });
+      notify("error", "Scan Gagal", "Tidak dapat terhubung ke server. Periksa koneksi internet.", "Koneksi gagal");
     } finally {
       busyRef.current = false;
     }
-  }, [authFetch, onCheckedIn]);
+  }, [authFetch, onCheckedIn, notify]);
 
   const stopCamera = useCallback(async () => {
     const s = scannerRef.current;
@@ -65,6 +104,7 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
   }, []);
 
   const startCamera = async () => {
+    unlockAudio();
     setCamError(null);
     try {
       const scanner = new Html5Qrcode(READER_ID, { verbose: false });
@@ -90,26 +130,70 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
 
   const submitManual = (e: React.FormEvent) => {
     e.preventDefault();
+    unlockAudio();
     lastScanRef.current = { kode: "", at: 0 }; // input manual selalu diproses
     checkIn(manual);
     setManual("");
   };
 
+  const toastStyle = {
+    ok: { box: "bg-green-600", Icon: CheckCircle2 },
+    already: { box: "bg-amber-500", Icon: AlertTriangle },
+    error: { box: "bg-red-600", Icon: XCircle },
+  } as const;
+
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      {/* Notifikasi pop-up hasil scan */}
+      {toast && (() => {
+        const { box, Icon } = toastStyle[toast.kind];
+        return (
+          <div
+            key={toast.id}
+            role="alert"
+            onClick={() => setToast(null)}
+            className={`fixed left-1/2 top-4 z-[60] flex w-[92%] max-w-md -translate-x-1/2 items-center gap-3 rounded-2xl px-5 py-4 text-white shadow-2xl cursor-pointer ${box}`}
+            style={{ animation: "natalToastIn 0.25s ease-out" }}
+          >
+            <Icon className="h-10 w-10 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-lg font-extrabold leading-tight">{toast.title}</p>
+              <p className="text-sm text-white/90 break-words">{toast.detail}</p>
+            </div>
+          </div>
+        );
+      })()}
+      <style>{`@keyframes natalToastIn{from{opacity:0;transform:translate(-50%,-16px) scale(.96)}to{opacity:1;transform:translate(-50%,0) scale(1)}}`}</style>
+
       {/* Kamera */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold text-slate-800">Scan Barcode Kehadiran</h2>
-          {running ? (
-            <button onClick={stopCamera} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
-              <CameraOff className="h-4 w-4" /> Matikan
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { unlockAudio(); setSoundOn(v => !v); }}
+              title={soundOn ? "Matikan suara" : "Nyalakan suara"}
+              className={`rounded-xl border p-2 cursor-pointer ${soundOn ? "border-green-300 bg-green-50 text-green-700" : "border-slate-300 text-slate-400"}`}
+            >
+              {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
             </button>
-          ) : (
-            <button onClick={startCamera} className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 cursor-pointer">
-              <Camera className="h-4 w-4" /> Buka Kamera
+            <button
+              onClick={() => { unlockAudio(); setVoiceOn(v => !v); }}
+              title={voiceOn ? "Matikan ucapan nama" : "Ucapkan nama peserta"}
+              className={`rounded-xl border p-2 cursor-pointer ${voiceOn ? "border-green-300 bg-green-50 text-green-700" : "border-slate-300 text-slate-400"}`}
+            >
+              {voiceOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
             </button>
-          )}
+            {running ? (
+              <button onClick={stopCamera} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                <CameraOff className="h-4 w-4" /> Matikan
+              </button>
+            ) : (
+              <button onClick={startCamera} className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 cursor-pointer">
+                <Camera className="h-4 w-4" /> Buka Kamera
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="relative overflow-hidden rounded-xl bg-slate-900" style={{ minHeight: 260 }}>
@@ -176,8 +260,8 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
               {history.map((h, i) => (
                 <li key={i} className="flex items-center justify-between py-2">
                   <span><span className="font-mono font-semibold text-slate-500">{h.nomor}</span> · {h.nama}</span>
-                  <span className={h.status === "ok" ? "text-green-600" : "text-amber-600"}>
-                    {h.status === "ok" ? "Hadir" : "Sudah"} · {formatWaktu(h.at)}
+                  <span className={h.status === "ok" ? "text-green-600" : h.status === "error" ? "text-red-600" : "text-amber-600"}>
+                    {h.status === "ok" ? "Hadir" : h.status === "error" ? "Gagal" : "Sudah"} · {formatWaktu(h.at)}
                   </span>
                 </li>
               ))}
