@@ -29,7 +29,10 @@ const READER_ID = "natal-qr-reader";
 
 export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const lastScanRef = useRef<{ kode: string; at: number }>({ kode: "", at: 0 });
+  // Menyimpan batas waktu jeda (cooldown) per kode barcode agar setelah berhasil scan
+  // tidak langsung tertimpa notifikasi "Sudah Scan Hadir" saat barcode masih di depan kamera
+  const codeCooldownRef = useRef<Map<string, number>>(new Map());
+  const globalCooldownRef = useRef<number>(0);
   const busyRef = useRef(false);
   const [running, setRunning] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
@@ -58,19 +61,27 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
     toastTimer.current = window.setTimeout(() => setToast(null), kind === "ok" ? 2500 : 3500);
   }, []);
 
-  const checkIn = useCallback(async (raw: string) => {
+  const checkIn = useCallback(async (raw: string, isManual = false) => {
     const kode = raw.trim();
     if (!kode || busyRef.current) return;
-    // Hindari scan berulang untuk kode yang sama dalam 3 detik
     const now = Date.now();
-    if (lastScanRef.current.kode === kode && now - lastScanRef.current.at < 3000) return;
-    lastScanRef.current = { kode, at: now };
+    if (!isManual) {
+      // Jeda global antar scan & jeda khusus per kode peserta
+      if (now < globalCooldownRef.current) return;
+      const blockedUntil = codeCooldownRef.current.get(kode) || 0;
+      if (now < blockedUntil) return;
+    }
     busyRef.current = true;
+    // Kunci sementara selama request berlangsung
+    codeCooldownRef.current.set(kode, now + 10000);
     try {
       const res = await authFetch("/api/natal/checkin", { method: "POST", body: JSON.stringify({ kode }) });
       const data = await res.json().catch(() => ({}));
+      const finishedAt = Date.now();
       if (!res.ok) {
         const message = data.error || "Gagal memproses barcode.";
+        codeCooldownRef.current.set(kode, finishedAt + 5000);
+        globalCooldownRef.current = finishedAt + 1500;
         setResult({ type: "error", message });
         setHistory(h => [{ nama: "Barcode tidak valid", nomor: "-", at: new Date().toISOString(), status: "error" }, ...h].slice(0, 10));
         notify("error", "Scan Gagal", message, "Barcode tidak terdaftar");
@@ -80,13 +91,22 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
         setResult({ type: already ? "already" : "ok", peserta: p });
         setHistory(h => [{ nama: p.nama, nomor: p.nomor, at: new Date().toISOString(), status: data.status }, ...h].slice(0, 10));
         if (already) {
+          // Jeda 6 detik agar tidak berbunyi beruntun untuk barcode yang sama
+          codeCooldownRef.current.set(kode, finishedAt + 6000);
+          globalCooldownRef.current = finishedAt + 1500;
           notify("already", "Sudah Scan Hadir", `${p.nama} (No. ${p.nomor}) sudah check-in pukul ${formatWaktu(p.waktuHadir)}`, `${p.nama} sudah hadir`);
         } else {
+          // Jeda 15 detik khusus peserta yang baru saja berhasil hadir agar tidak tertimpa "Sudah Scan Hadir"
+          codeCooldownRef.current.set(kode, finishedAt + 15000);
+          globalCooldownRef.current = finishedAt + 1800;
           notify("ok", "Berhasil Hadir", `${p.nama} · No. ${p.nomor}`, `Selamat datang, ${p.nama}`);
           onCheckedIn();
         }
       }
     } catch {
+      const finishedAt = Date.now();
+      codeCooldownRef.current.set(kode, finishedAt + 4000);
+      globalCooldownRef.current = finishedAt + 1500;
       setResult({ type: "error", message: "Tidak dapat terhubung ke server." });
       notify("error", "Scan Gagal", "Tidak dapat terhubung ke server. Periksa koneksi internet.", "Koneksi gagal");
     } finally {
@@ -131,8 +151,7 @@ export default function ScanPanel({ authFetch, onCheckedIn }: Props) {
   const submitManual = (e: React.FormEvent) => {
     e.preventDefault();
     unlockAudio();
-    lastScanRef.current = { kode: "", at: 0 }; // input manual selalu diproses
-    checkIn(manual);
+    checkIn(manual, true);
     setManual("");
   };
 
