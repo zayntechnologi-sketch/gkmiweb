@@ -71,15 +71,24 @@ export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefre
 
   const totalHadir = peserta.filter(p => p.hadir).length;
 
-  // Selalu diurutkan sesuai nomor peserta
+  // Di filter "hadir" urutkan sesuai waktu hadir terakhir (terbaru di atas),
+  // sedangkan di "semua" & "belum" urutkan sesuai nomor peserta.
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return sortByNomor(peserta).filter(p => {
+    const filtered = sortByNomor(peserta).filter(p => {
       if (filter === "hadir" && !p.hadir) return false;
       if (filter === "belum" && p.hadir) return false;
       if (q && !p.nama.toLowerCase().includes(q) && !p.nomor.toLowerCase().includes(q)) return false;
       return true;
     });
+    if (filter === "hadir") {
+      return [...filtered].sort((a, b) => {
+        const tA = a.waktuHadir ? new Date(a.waktuHadir).getTime() : 0;
+        const tB = b.waktuHadir ? new Date(b.waktuHadir).getTime() : 0;
+        return tB - tA;
+      });
+    }
+    return filtered;
   }, [peserta, search, filter]);
 
   const toggleHadir = async (p: NatalPeserta) => {
@@ -364,7 +373,9 @@ export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefre
           </table>
         </div>
         <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
-          Diurutkan berdasarkan nomor peserta · diperbarui otomatis setiap 5 detik
+          {filter === "hadir"
+            ? "Diurutkan berdasarkan waktu hadir terakhir (terbaru di atas) · diperbarui otomatis setiap 3 detik"
+            : "Diurutkan berdasarkan nomor peserta · diperbarui otomatis setiap 3 detik"}
         </p>
       </div>
     </div>
