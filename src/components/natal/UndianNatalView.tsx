@@ -109,9 +109,14 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
   const isObsUrl = urlParams.get("obs") === "1" || typeof (window as any).obsstudio !== "undefined";
   const isTransparentBg = urlParams.get("bg") === "transparent";
 
-  // Daftar peserta lokal jika dibuka langsung di OBS tanpa sesi login
-  const [obsPeserta, setObsPeserta] = useState<NatalPeserta[]>([]);
-  const peserta = propPeserta.length > 0 ? propPeserta : obsPeserta;
+  // Daftar peserta live (diperbarui otomatis dari server setiap 2 detik)
+  const [livePeserta, setLivePeserta] = useState<NatalPeserta[]>(propPeserta);
+  useEffect(() => {
+    if (propPeserta.length > 0 && !spinning) {
+      setLivePeserta(propPeserta);
+    }
+  }, [propPeserta, spinning]);
+  const peserta = livePeserta.length > 0 ? livePeserta : propPeserta;
 
   // Mode tampilan & filter
   const [projectorMode, setProjectorMode] = useState<boolean>(isObsUrl);
@@ -457,8 +462,8 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
         if (!res.ok || !active) return;
         const data = await res.json();
         const list: NatalPeserta[] = Array.isArray(data.peserta) ? data.peserta : peserta;
-        if (Array.isArray(data.peserta) && propPeserta.length === 0) {
-          setObsPeserta(data.peserta);
+        if (Array.isArray(data.peserta) && !spinning) {
+          setLivePeserta(data.peserta);
         }
         if ((projectorMode || isObsUrl) && data.state) {
           applyIncomingStageState(data.state, list);
@@ -466,15 +471,12 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
       } catch {}
     };
     poll();
-    if (!projectorMode && !isObsUrl) {
-      return () => { active = false; };
-    }
-    const timer = setInterval(poll, 1500);
+    const timer = setInterval(poll, 2000);
     return () => {
       active = false;
       clearInterval(timer);
     };
-  }, [projectorMode, isObsUrl, propPeserta.length, peserta, applyIncomingStageState]);
+  }, [projectorMode, isObsUrl, spinning, peserta, applyIncomingStageState]);
 
   useEffect(() => {
     return () => cancelAnimationFrame(animFrameRef.current);
