@@ -437,6 +437,34 @@ export const handler: Handler = async (event: HandlerEvent, _ctx: HandlerContext
     }
 
     // ── Panitia Natal: peserta undangan ───────────────────────────────────────
+    if (path === "/api/natal/undian-live" && method === "GET") {
+      // Endpoint read-only untuk OBS Browser Source & Mode Proyektor
+      const docs = await db.collection("natalPeserta").find({}).toArray();
+      const stateDoc = await db.collection("settings").findOne({ key: "natalUndianState" });
+      return json(200, {
+        peserta: docs.map((d: any) => ({
+          id: d.id,
+          nama: d.nama,
+          nomor: d.nomor,
+          kode: d.kode,
+          hadir: !!d.hadir,
+          waktuHadir: d.waktuHadir || null,
+          createdAt: d.createdAt || "",
+        })),
+        state: stateDoc?.value || null,
+      });
+    }
+
+    if (path === "/api/natal/undian-live" && method === "POST") {
+      if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
+      await db.collection("settings").updateOne(
+        { key: "natalUndianState" },
+        { $set: { key: "natalUndianState", value: body } },
+        { upsert: true }
+      );
+      return json(200, { ok: true });
+    }
+
     if (path === "/api/natal/peserta" && method === "GET") {
       if (!isPanitia(event)) return json(401, { error: "Unauthorized" });
       const docs = await db.collection("natalPeserta").find({}).toArray();

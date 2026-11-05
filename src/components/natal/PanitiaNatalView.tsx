@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Users, ScanLine, ClipboardCheck, LogOut, ArrowLeft, TreePine, Sparkles } from "lucide-react";
 import { NatalPeserta } from "../../types";
 import { usePanitiaAuth } from "../../hooks/usePanitiaAuth";
@@ -70,6 +70,22 @@ export default function PanitiaNatalView({ onBack }: Props) {
     };
   }, [user, refresh]);
 
+  const isObsMode = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("obs") === "1";
+  }, []);
+
+  if (isObsMode) {
+    return (
+      <UndianNatalView
+        peserta={peserta}
+        authFetch={authFetch}
+        onRefresh={refresh}
+        onBack={closeUndianPage}
+      />
+    );
+  }
+
   if (checking) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm text-slate-400">
@@ -95,6 +111,7 @@ export default function PanitiaNatalView({ onBack }: Props) {
     return (
       <UndianNatalView
         peserta={peserta}
+        authFetch={authFetch}
         onRefresh={refresh}
         onBack={closeUndianPage}
       />

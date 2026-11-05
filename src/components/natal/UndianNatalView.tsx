@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles, Volume2, VolumeX, Maximize2, Minimize2, RotateCcw,
-  Search, X, Shuffle, Trophy, Monitor, Sliders, ArrowLeft, CheckCircle2, Users
+  Search, X, Shuffle, Trophy, Monitor, Sliders, ArrowLeft, CheckCircle2,
+  Users, Radio, Copy, Check
 } from "lucide-react";
 import { NatalPeserta } from "../../types";
 import { sortByNomor } from "./barcode";
 
 interface Props {
   peserta: NatalPeserta[];
+  authFetch?: (url: string, opts?: RequestInit) => Promise<Response>;
   onRefresh: () => void;
   onBack: () => void;
 }
@@ -21,6 +23,19 @@ interface WinnerRecord {
   round: number;
 }
 
+interface StageSyncPayload {
+  spinId?: string;
+  winnerId?: string;
+  targetDelta?: number;
+  startAngle?: number;
+  durationSec?: number;
+  onlyHadir?: boolean;
+  excludedIds?: string[];
+  shuffleOrder?: string[] | null;
+  dismissModalAt?: number;
+  updatedAt: number;
+}
+
 const WHEEL_COLORS = [
   "#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed",
   "#0891b2", "#dc2626", "#4f46e5", "#059669", "#ea580c",
@@ -29,6 +44,7 @@ const WHEEL_COLORS = [
 
 const WINNERS_STORAGE_KEY = "gkmi_natal_doorprize_winners";
 const EXCLUDED_STORAGE_KEY = "gkmi_natal_doorprize_excluded";
+const BROADCAST_CHANNEL_NAME = "gkmi_undian_natal_stage";
 
 // Web Audio synthesizer untuk bunyi klik roda (tick) & fanfare pemenang
 let audioCtx: AudioContext | null = null;
@@ -86,11 +102,19 @@ function playWinFanfare() {
   }
 }
 
-export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
+export default function UndianNatalView({ peserta: propPeserta, authFetch, onRefresh, onBack }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const isObsUrl = urlParams.get("obs") === "1";
+  const isTransparentBg = urlParams.get("bg") === "transparent";
+
+  // Daftar peserta lokal jika dibuka langsung di OBS tanpa sesi login
+  const [obsPeserta, setObsPeserta] = useState<NatalPeserta[]>([]);
+  const peserta = propPeserta.length > 0 ? propPeserta : obsPeserta;
+
   // Mode tampilan & filter
-  const [projectorMode, setProjectorMode] = useState(false);
+  const [projectorMode, setProjectorMode] = useState<boolean>(isObsUrl);
   const [onlyHadir, setOnlyHadir] = useState(false);
   const [sideTab, setSideTab] = useState<"peserta" | "pemenang">("peserta");
   const [search, setSearch] = useState("");
@@ -98,6 +122,8 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [autoRemoveWinner, setAutoRemoveWinner] = useState(true);
   const [durationSec, setDurationSec] = useState<number>(6);
+  const [showObsModal, setShowObsModal] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Daftar ID yang dikeluarkan dari roda (karena sudah menang atau dihapus manual)
   const [excludedIds, setExcludedIds] = useState<string[]>(() => {
@@ -121,7 +147,10 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
   const rotationRef = useRef<number>(0); // radian
   const animFrameRef = useRef<number>(0);
   const lastTickIndexRef = useRef<number>(-1);
+  const lastSpinIdRef = useRef<string>("");
+  const lastDismissAtRef = useRef<number>(0);
   const [winnerModal, setWinnerModal] = useState<NatalPeserta | null>(null);
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
     localStorage.setItem(EXCLUDED_STORAGE_KEY, JSON.stringify(excludedIds));
@@ -150,6 +179,19 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
       p => p.nama.toLowerCase().includes(q) || p.nomor.toLowerCase().includes(q)
     );
   }, [activePool, search]);
+
+  // Kirim state ke OBS (via BroadcastChannel lokal + API backend)
+  const publishStageState = useCallback((payload: StageSyncPayload) => {
+    try {
+      channelRef.current?.postMessage(payload);
+    } catch {}
+    if (authFetch) {
+      authFetch("/api/natal/undian-live", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }
+  }, [authFetch]);
 
   // Gambar roda undian di Canvas
   const drawWheel = useCallback((angleRad: number) => {
@@ -259,45 +301,34 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
     drawWheel(rotationRef.current);
   }, [drawWheel]);
 
-  // Fungsi memutar roda dengan крипто-random (window.crypto.getRandomValues)
-  const spinWheel = useCallback(() => {
-    if (spinning || activePool.length === 0) return;
+  // Eksekusi animasi putaran roda (baik dipicu langsung maupun dari sinyal remote Console ke OBS)
+  const runSpinAnimation = useCallback((
+    chosenWinner: NatalPeserta,
+    startAngle: number,
+    totalDelta: number,
+    spinDurationSec: number,
+    shouldAutoRemove: boolean
+  ) => {
     getAudio();
     setWinnerModal(null);
     setSpinning(true);
 
-    const total = activePool.length;
-    const randBuf = new Uint32Array(1);
-    window.crypto.getRandomValues(randBuf);
-    const winnerIndex = randBuf[0] % total;
-    const chosenWinner = activePool[winnerIndex];
-
-    // Hitung target sudut agar sektor winnerIndex tepat berhenti di jarum atas (jam 12)
+    const total = Math.max(1, activePool.length);
     const arc = (Math.PI * 2) / total;
-    // Jarum menunjuk ke arah -PI/2 (dalam koordinat kita: angleRad + winnerIndex*arc + arc/2 = 0 mod 2PI)
-    const jitter = (Math.random() - 0.5) * arc * 0.65;
-    const targetMod = ((Math.PI * 2) - (winnerIndex * arc + arc / 2) + jitter) % (Math.PI * 2);
-    const currentMod = ((rotationRef.current % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    let delta = targetMod - currentMod;
-    if (delta < 0) delta += Math.PI * 2;
-
-    const extraSpins = (durationSec >= 9 ? 11 : durationSec >= 6 ? 8 : 5) * Math.PI * 2;
-    const startAngle = rotationRef.current;
-    const totalDelta = extraSpins + delta;
-    const durationMs = durationSec * 1000;
+    const durationMs = spinDurationSec * 1000;
     const startTime = performance.now();
     lastTickIndexRef.current = -1;
+
+    cancelAnimationFrame(animFrameRef.current);
 
     const animate = (now: number) => {
       const elapsed = now - startTime;
       const t = Math.min(1, elapsed / durationMs);
-      // Quintic ease-out untuk pengereman dramatis di akhir
       const eased = 1 - Math.pow(1 - t, 4.5);
       const currentAngle = startAngle + totalDelta * eased;
       rotationRef.current = currentAngle;
       drawWheel(currentAngle);
 
-      // Bunyi tick setiap melewati batas juring
       const norm = (((-currentAngle) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
       const currentIdx = Math.floor(norm / arc) % total;
       if (currentIdx !== lastTickIndexRef.current) {
@@ -322,18 +353,143 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
           },
           ...prev,
         ]);
-        if (autoRemoveWinner) {
+        if (shouldAutoRemove) {
           setExcludedIds(prev => (prev.includes(chosenWinner.id) ? prev : [...prev, chosenWinner.id]));
         }
       }
     };
 
     animFrameRef.current = requestAnimationFrame(animate);
-  }, [spinning, activePool, durationSec, drawWheel, soundOn, autoRemoveWinner]);
+  }, [activePool.length, drawWheel, soundOn]);
+
+  // Fungsi memutar roda dari tombol
+  const spinWheel = useCallback(() => {
+    if (spinning || activePool.length === 0) return;
+
+    const total = activePool.length;
+    const randBuf = new Uint32Array(1);
+    window.crypto.getRandomValues(randBuf);
+    const winnerIndex = randBuf[0] % total;
+    const chosenWinner = activePool[winnerIndex];
+
+    const arc = (Math.PI * 2) / total;
+    const jitter = (Math.random() - 0.5) * arc * 0.65;
+    const targetMod = ((Math.PI * 2) - (winnerIndex * arc + arc / 2) + jitter) % (Math.PI * 2);
+    const currentMod = ((rotationRef.current % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    let delta = targetMod - currentMod;
+    if (delta < 0) delta += Math.PI * 2;
+
+    const extraSpins = (durationSec >= 9 ? 11 : durationSec >= 6 ? 8 : 5) * Math.PI * 2;
+    const startAngle = rotationRef.current;
+    const totalDelta = extraSpins + delta;
+    const spinId = "spin_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+    lastSpinIdRef.current = spinId;
+
+    // Kirim komando putaran ke OBS / Proyektor
+    publishStageState({
+      spinId,
+      winnerId: chosenWinner.id,
+      startAngle,
+      targetDelta: totalDelta,
+      durationSec,
+      onlyHadir,
+      excludedIds,
+      shuffleOrder,
+      updatedAt: Date.now(),
+    });
+
+    runSpinAnimation(chosenWinner, startAngle, totalDelta, durationSec, autoRemoveWinner);
+  }, [spinning, activePool, durationSec, onlyHadir, excludedIds, shuffleOrder, autoRemoveWinner, publishStageState, runSpinAnimation]);
+
+  // Terapkan komando sinkronisasi yang masuk (dari Console ke OBS/Proyektor)
+  const applyIncomingStageState = useCallback((st: StageSyncPayload, currentPesertaList: NatalPeserta[]) => {
+    if (!st) return;
+    if (typeof st.onlyHadir === "boolean") setOnlyHadir(st.onlyHadir);
+    if (Array.isArray(st.excludedIds)) setExcludedIds(st.excludedIds);
+    if (st.shuffleOrder !== undefined) setShuffleOrder(st.shuffleOrder);
+
+    if (st.dismissModalAt && st.dismissModalAt > lastDismissAtRef.current) {
+      lastDismissAtRef.current = st.dismissModalAt;
+      setWinnerModal(null);
+    }
+
+    if (
+      st.spinId &&
+      st.spinId !== lastSpinIdRef.current &&
+      st.winnerId &&
+      typeof st.targetDelta === "number" &&
+      Date.now() - st.updatedAt < 15000
+    ) {
+      lastSpinIdRef.current = st.spinId;
+      const found = currentPesertaList.find(p => p.id === st.winnerId);
+      if (found) {
+        runSpinAnimation(
+          found,
+          st.startAngle ?? rotationRef.current,
+          st.targetDelta,
+          st.durationSec || 6,
+          true
+        );
+      }
+    }
+  }, [runSpinAnimation]);
+
+  // Listener BroadcastChannel + Polling ringan untuk OBS Browser Source
+  useEffect(() => {
+    if (typeof BroadcastChannel !== "undefined") {
+      const ch = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+      channelRef.current = ch;
+      ch.onmessage = ev => {
+        if (ev?.data) applyIncomingStageState(ev.data as StageSyncPayload, peserta);
+      };
+    }
+    return () => {
+      channelRef.current?.close();
+      channelRef.current = null;
+    };
+  }, [applyIncomingStageState, peserta]);
+
+  useEffect(() => {
+    if (!projectorMode && !isObsUrl) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/natal/undian-live?_t=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        const list: NatalPeserta[] = Array.isArray(data.peserta) ? data.peserta : peserta;
+        if (Array.isArray(data.peserta) && propPeserta.length === 0) {
+          setObsPeserta(data.peserta);
+        }
+        if (data.state) {
+          applyIncomingStageState(data.state, list);
+        }
+      } catch {}
+    };
+    poll();
+    const timer = setInterval(poll, 1500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [projectorMode, isObsUrl, propPeserta.length, peserta, applyIncomingStageState]);
 
   useEffect(() => {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, []);
+
+  const dismissWinnerModal = useCallback(() => {
+    setWinnerModal(null);
+    const now = Date.now();
+    lastDismissAtRef.current = now;
+    publishStageState({
+      onlyHadir,
+      excludedIds,
+      shuffleOrder,
+      dismissModalAt: now,
+      updatedAt: now,
+    });
+  }, [onlyHadir, excludedIds, shuffleOrder, publishStageState]);
 
   // Shortcut keyboard: Space (Spin), P (Mode Proyektor), Esc (Tutup modal)
   useEffect(() => {
@@ -343,7 +499,7 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
       if (e.code === "Space") {
         e.preventDefault();
         if (winnerModal) {
-          setWinnerModal(null);
+          dismissWinnerModal();
         } else {
           spinWheel();
         }
@@ -351,12 +507,13 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
         e.preventDefault();
         setProjectorMode(v => !v);
       } else if (e.key === "Escape") {
-        if (winnerModal) setWinnerModal(null);
+        if (winnerModal) dismissWinnerModal();
+        else if (showObsModal) setShowObsModal(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [spinWheel, winnerModal]);
+  }, [spinWheel, winnerModal, showObsModal, dismissWinnerModal]);
 
   const handleShuffle = () => {
     if (spinning) return;
@@ -366,6 +523,12 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
     setShuffleOrder(ids);
+    publishStageState({
+      onlyHadir,
+      excludedIds,
+      shuffleOrder: ids,
+      updatedAt: Date.now(),
+    });
   };
 
   const handleResetRoster = () => {
@@ -373,6 +536,12 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
     if (!confirm("Reset daftar roda undian? Semua peserta yang sebelumnya sudah menang/dikeluarkan akan masuk kembali ke dalam roda.")) return;
     setExcludedIds([]);
     setShuffleOrder(null);
+    publishStageState({
+      onlyHadir,
+      excludedIds: [],
+      shuffleOrder: null,
+      updatedAt: Date.now(),
+    });
     onRefresh();
   };
 
@@ -384,116 +553,153 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
     }
   };
 
+  const obsStageUrl = `${window.location.origin}/undian-natal?obs=1`;
+  const obsTransparentUrl = `${window.location.origin}/undian-natal?obs=1&bg=transparent`;
+
+  const copyText = (key: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
   return (
-    <div className="min-h-screen bg-[#070a12] text-slate-100 flex flex-col select-none">
-      {/* Top Stage Header */}
-      <header className="border-b border-white/10 bg-[#0b101d]/90 backdrop-blur px-4 py-3 lg:px-8">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
-          {/* Brand Title */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              title="Kembali ke Panel Panitia Natal"
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 cursor-pointer"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/20 to-amber-700/20 text-amber-400 shadow-inner">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-extrabold tracking-widest text-amber-400 uppercase">
-                  PERAYAAN NATAL GKMI ICHTUS
-                </span>
-                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 border border-amber-500/30">
-                  STAGE MODE v3.2
-                </span>
+    <div
+      className={`min-h-screen text-slate-100 flex flex-col select-none ${
+        isTransparentBg ? "bg-transparent" : "bg-[#070a12]"
+      }`}
+    >
+      {/* Top Stage Header — HANYA tampil di Mode Console (disembunyikan penuh di Mode Proyektor / OBS) */}
+      {!projectorMode && (
+        <header className="border-b border-white/10 bg-[#0b101d]/90 backdrop-blur px-4 py-3 lg:px-8">
+          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
+            {/* Brand Title */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onBack}
+                title="Kembali ke Panel Panitia Natal"
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 cursor-pointer"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/20 to-amber-700/20 text-amber-400 shadow-inner">
+                <Sparkles className="h-5 w-5" />
               </div>
-              <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
-                Doorprize Natal GKMI ICHTUS
-              </h1>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-extrabold tracking-widest text-amber-400 uppercase">
+                    PERAYAAN NATAL GKMI ICHTUS
+                  </span>
+                  <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 border border-amber-500/30">
+                    STAGE MODE v3.2
+                  </span>
+                </div>
+                <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                  Doorprize Natal GKMI ICHTUS
+                </h1>
+              </div>
+            </div>
+
+            {/* Controls Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Console vs Mode Proyektor */}
+              <div className="flex rounded-xl border border-white/10 bg-[#111827] p-1 text-xs font-bold">
+                <button
+                  onClick={() => setProjectorMode(false)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 cursor-pointer transition ${
+                    !projectorMode ? "bg-amber-500 text-slate-950 shadow" : "text-slate-300 hover:text-white"
+                  }`}
+                >
+                  <Sliders className="h-3.5 w-3.5" /> Console
+                </button>
+                <button
+                  onClick={() => setProjectorMode(true)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 cursor-pointer transition ${
+                    projectorMode ? "bg-amber-500 text-slate-950 shadow" : "text-slate-300 hover:text-white"
+                  }`}
+                >
+                  <Monitor className="h-3.5 w-3.5" /> Mode Proyektor
+                  <span className="rounded bg-white/15 px-1 text-[10px]">P</span>
+                </button>
+              </div>
+
+              {/* Tombol Sambungkan ke OBS */}
+              <button
+                onClick={() => setShowObsModal(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/15 px-3 py-2 text-xs font-extrabold text-purple-300 hover:bg-purple-500/25 cursor-pointer"
+                title="Sambungkan ke OBS Studio (Browser Source)"
+              >
+                <Radio className="h-3.5 w-3.5 text-purple-400 animate-pulse" />
+                <span>Sambungkan OBS</span>
+              </button>
+
+              {/* Filter Semua vs Hanya yang Hadir */}
+              <div className="flex rounded-xl border border-white/10 bg-[#111827] p-1 text-xs font-bold">
+                <button
+                  onClick={() => {
+                    setOnlyHadir(false);
+                    publishStageState({ onlyHadir: false, excludedIds, shuffleOrder, updatedAt: Date.now() });
+                  }}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition ${
+                    !onlyHadir ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5" /> Semua ({peserta.length})
+                </button>
+                <button
+                  onClick={() => {
+                    setOnlyHadir(true);
+                    publishStageState({ onlyHadir: true, excludedIds, shuffleOrder, updatedAt: Date.now() });
+                  }}
+                  className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition ${
+                    onlyHadir ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Hadir Saja ({peserta.filter(p => p.hadir).length})
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-[#111827] px-3 py-1.5 text-xs text-slate-300">
+                Total di Roda: <span className="font-extrabold text-amber-400">{activePool.length} Peserta</span>
+              </div>
+
+              <button
+                onClick={() => setSoundOn(s => !s)}
+                title={soundOn ? "Matikan suara panggung" : "Nyalakan suara panggung"}
+                className={`rounded-xl border p-2 cursor-pointer ${
+                  soundOn
+                    ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                    : "border-white/10 bg-[#111827] text-slate-500"
+                }`}
+              >
+                {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              </button>
+
+              <button
+                onClick={toggleFullscreen}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 cursor-pointer"
+              >
+                {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+                Layar Panggung
+              </button>
             </div>
           </div>
+        </header>
+      )}
 
-          {/* Controls Bar */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Console vs Mode Proyektor */}
-            <div className="flex rounded-xl border border-white/10 bg-[#111827] p-1 text-xs font-bold">
-              <button
-                onClick={() => setProjectorMode(false)}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 cursor-pointer transition ${
-                  !projectorMode ? "bg-amber-500 text-slate-950 shadow" : "text-slate-300 hover:text-white"
-                }`}
-              >
-                <Sliders className="h-3.5 w-3.5" /> Console
-              </button>
-              <button
-                onClick={() => setProjectorMode(true)}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 cursor-pointer transition ${
-                  projectorMode ? "bg-amber-500 text-slate-950 shadow" : "text-slate-300 hover:text-white"
-                }`}
-              >
-                <Monitor className="h-3.5 w-3.5" /> Mode Proyektor
-                <span className="rounded bg-white/15 px-1 text-[10px]">P</span>
-              </button>
-            </div>
-
-            {/* Filter Semua vs Hanya yang Hadir */}
-            <div className="flex rounded-xl border border-white/10 bg-[#111827] p-1 text-xs font-bold">
-              <button
-                onClick={() => setOnlyHadir(false)}
-                className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition ${
-                  !onlyHadir ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Users className="h-3.5 w-3.5" /> Semua ({peserta.length})
-              </button>
-              <button
-                onClick={() => setOnlyHadir(true)}
-                className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 cursor-pointer transition ${
-                  onlyHadir ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" /> Hadir Saja ({peserta.filter(p => p.hadir).length})
-              </button>
-            </div>
-
-            <div className="hidden xl:flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              Live Stage Ready
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-[#111827] px-3 py-1.5 text-xs text-slate-300">
-              Total di Roda: <span className="font-extrabold text-amber-400">{activePool.length} Peserta</span>
-            </div>
-
-            <button
-              onClick={() => setSoundOn(s => !s)}
-              title={soundOn ? "Matikan suara panggung" : "Nyalakan suara panggung"}
-              className={`rounded-xl border p-2 cursor-pointer ${
-                soundOn
-                  ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
-                  : "border-white/10 bg-[#111827] text-slate-500"
-              }`}
-            >
-              {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-            </button>
-
-            <button
-              onClick={toggleFullscreen}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 cursor-pointer"
-            >
-              {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-              Layar Panggung
-            </button>
-          </div>
-        </div>
-      </header>
+      {/* Tombol halus di pojok kanan atas saat Mode Proyektor (muncul saat hover) */}
+      {projectorMode && !isObsUrl && (
+        <button
+          onClick={() => setProjectorMode(false)}
+          title="Kembali ke Mode Console (Tekan P)"
+          className="fixed right-4 top-4 z-30 rounded-xl border border-white/10 bg-black/40 px-3 py-1.5 text-xs font-bold text-slate-400 opacity-20 hover:opacity-100 transition cursor-pointer"
+        >
+          Console (P)
+        </button>
+      )}
 
       {/* Main Content */}
       <main className="mx-auto flex flex-1 w-full max-w-[1440px] flex-col lg:flex-row items-center justify-center gap-8 px-4 py-6 lg:px-8">
-        {/* Left / Center: Spin Wheel Stage */}
+        {/* Roda Undian + 2 Tombol Utama */}
         <div className={`flex flex-col items-center justify-center ${projectorMode ? "w-full" : "lg:w-7/12"}`}>
           <div className="relative flex items-center justify-center">
             {/* Golden Pointer Pin at Top (12 o'clock) */}
@@ -508,11 +714,11 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
             {/* Wheel Canvas */}
             <canvas
               ref={canvasRef}
-              width={560}
-              height={560}
-              className={`rounded-full shadow-[0_0_70px_rgba(245,158,11,0.18)] ${
+              width={600}
+              height={600}
+              className={`rounded-full shadow-[0_0_85px_rgba(245,158,11,0.22)] ${
                 projectorMode
-                  ? "w-[340px] h-[340px] sm:w-[520px] sm:h-[520px]"
+                  ? "w-[360px] h-[360px] sm:w-[560px] sm:h-[560px]"
                   : "w-[320px] h-[320px] sm:w-[460px] sm:h-[460px]"
               }`}
             />
@@ -529,8 +735,8 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
             </button>
           </div>
 
-          {/* Action Buttons Under Wheel */}
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {/* Action Buttons Under Wheel (Tetap tampil di Mode Proyektor sesuai gambar) */}
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={spinWheel}
               disabled={spinning || activePool.length === 0}
@@ -551,16 +757,19 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
             </button>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-[11px] text-slate-400">
-            <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">Space</kbd> Putar Roda</span>
-            <span>•</span>
-            <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">P</kbd> Mode Proyektor</span>
-            <span>•</span>
-            <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">Esc</kbd> Tutup Modal</span>
-          </div>
+          {/* Shortcut hints hanya di Mode Console */}
+          {!projectorMode && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-[11px] text-slate-400">
+              <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">Space</kbd> Putar Roda</span>
+              <span>•</span>
+              <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">P</kbd> Mode Proyektor</span>
+              <span>•</span>
+              <span><kbd className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">Esc</kbd> Tutup Modal</span>
+            </div>
+          )}
         </div>
 
-        {/* Right: Roster & Winner Console Panel */}
+        {/* Right: Roster & Winner Console Panel (Hanya di Mode Console) */}
         {!projectorMode && (
           <div className="w-full lg:w-5/12 rounded-3xl border border-white/10 bg-[#0d1322] p-5 shadow-2xl flex flex-col max-h-[680px]">
             {/* Top Tabs */}
@@ -639,7 +848,11 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
                           </span>
                         </div>
                         <button
-                          onClick={() => setExcludedIds(prev => [...prev, p.id])}
+                          onClick={() => {
+                            const next = [...excludedIds, p.id];
+                            setExcludedIds(next);
+                            publishStageState({ onlyHadir, excludedIds: next, shuffleOrder, updatedAt: Date.now() });
+                          }}
                           title="Keluarkan dari roda undian"
                           className="text-slate-500 hover:text-red-400 p-1 cursor-pointer"
                         >
@@ -728,22 +941,102 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
         )}
       </main>
 
-      {/* Bottom Stage Footer */}
-      <footer className="border-t border-white/5 px-6 py-2.5 text-[11px] text-slate-500 flex flex-wrap items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          <span>Algorithm: Secure Mersenne / Crypto Randomizer</span>
-          <span>|</span>
-          <span>Anti-Collision: Enabled</span>
+      {/* Bottom Stage Footer — Hanya di Mode Console */}
+      {!projectorMode && (
+        <footer className="border-t border-white/5 px-6 py-2.5 text-[11px] text-slate-500 flex flex-wrap items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <span>Algorithm: Secure Mersenne / Crypto Randomizer</span>
+            <span>|</span>
+            <span>OBS Live Sync: Active</span>
+          </div>
+          <div>GKMI ICHTUS • Stage Console Mode</div>
+        </footer>
+      )}
+
+      {/* Modal Sambungkan ke OBS Studio */}
+      {showObsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setShowObsModal(false)}
+        >
+          <div
+            className="w-full max-w-xl rounded-3xl border border-purple-500/40 bg-[#0d1322] p-6 text-left shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/20 text-purple-300">
+                  <Radio className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">Sambungkan ke OBS Studio</h3>
+                  <p className="text-xs text-slate-400">Sinkron otomatis saat Anda memutar roda dari Console</p>
+                </div>
+              </div>
+              <button onClick={() => setShowObsModal(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 text-xs">
+              <div>
+                <label className="mb-1.5 block font-bold text-amber-300">
+                  1. URL OBS Browser Source (Latar Gelap Proyektor)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={obsStageUrl}
+                    className="flex-1 rounded-xl border border-white/10 bg-[#070a12] px-3 py-2.5 font-mono text-slate-200 outline-none"
+                  />
+                  <button
+                    onClick={() => copyText("stage", obsStageUrl)}
+                    className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2.5 font-extrabold text-slate-950 hover:bg-amber-400 cursor-pointer"
+                  >
+                    {copiedKey === "stage" ? <><Check className="h-4 w-4" /> Disalin</> : <><Copy className="h-4 w-4" /> Salin URL</>}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block font-bold text-purple-300">
+                  2. URL OBS Overlay Transparan (Untuk ditumpuk di atas kamera Live)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={obsTransparentUrl}
+                    className="flex-1 rounded-xl border border-white/10 bg-[#070a12] px-3 py-2.5 font-mono text-slate-200 outline-none"
+                  />
+                  <button
+                    onClick={() => copyText("trans", obsTransparentUrl)}
+                    className="flex items-center gap-1.5 rounded-xl bg-purple-500 px-4 py-2.5 font-extrabold text-white hover:bg-purple-400 cursor-pointer"
+                  >
+                    {copiedKey === "trans" ? <><Check className="h-4 w-4" /> Disalin</> : <><Copy className="h-4 w-4" /> Salin URL</>}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-[#070a12] p-4 space-y-1.5 text-slate-300">
+                <p className="font-bold text-white">Cara Pasang di OBS Studio:</p>
+                <ol className="list-decimal pl-4 space-y-1 text-slate-400">
+                  <li>Di OBS Studio, klik <b>+</b> pada panel <b>Sources</b> → pilih <b>Browser</b>.</li>
+                  <li>Tempel salah satu URL di atas pada kolom <b>URL</b>.</li>
+                  <li>Isi <b>Width: 1920</b> dan <b>Height: 1080</b> → klik <b>OK</b>.</li>
+                  <li>Saat Anda menekan <b>PUTAR RODA SEKARANG</b> di halaman Console ini, roda di OBS akan otomatis berputar secara real-time!</li>
+                </ol>
+              </div>
+            </div>
+          </div>
         </div>
-        <div>GKMI ICHTUS • Stage Console Mode</div>
-      </footer>
+      )}
 
       {/* Modal Pengumuman Pemenang */}
       {winnerModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
-          onClick={() => setWinnerModal(null)}
+          onClick={dismissWinnerModal}
         >
           <div
             className="relative w-full max-w-lg rounded-3xl border-2 border-amber-400/60 bg-gradient-to-b from-[#161f35] to-[#090d16] p-8 text-center shadow-[0_0_90px_rgba(245,158,11,0.35)]"
@@ -766,7 +1059,7 @@ export default function UndianNatalView({ peserta, onRefresh, onBack }: Props) {
             </p>
             <div className="mt-7 flex justify-center gap-3">
               <button
-                onClick={() => setWinnerModal(null)}
+                onClick={dismissWinnerModal}
                 className="rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-8 py-3 text-sm font-black text-slate-950 shadow-lg hover:brightness-110 cursor-pointer"
               >
                 LANJUT UNDIAN (ESC)

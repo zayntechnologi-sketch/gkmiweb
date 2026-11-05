@@ -759,6 +759,36 @@ app.get("/api/natal/peserta", panitiaMiddleware, async (_req, res) => {
   res.json(await loadPeserta());
 });
 
+app.get("/api/natal/undian-live", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  const list = await loadPeserta();
+  let state: any = null;
+  if (isMongo && mongoDb) {
+    try {
+      const doc = await mongoDb.collection("settings").findOne({ key: "natalUndianState" });
+      state = doc?.value || null;
+    } catch {}
+  } else {
+    state = readLocalDb().natalUndianState || null;
+  }
+  res.json({ peserta: list, state });
+});
+
+app.post("/api/natal/undian-live", panitiaMiddleware, async (req, res) => {
+  if (isMongo && mongoDb) {
+    await mongoDb.collection("settings").updateOne(
+      { key: "natalUndianState" },
+      { $set: { key: "natalUndianState", value: req.body } },
+      { upsert: true }
+    );
+  } else {
+    const db = readLocalDb();
+    db.natalUndianState = req.body;
+    writeLocalDb(db);
+  }
+  res.json({ ok: true });
+});
+
 app.post("/api/natal/peserta", panitiaMiddleware, async (req, res) => {
   const nama = String(req.body.nama || "").trim();
   const nomor = String(req.body.nomor || "").trim();
