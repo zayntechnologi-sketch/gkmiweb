@@ -109,6 +109,9 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
   const isObsUrl = urlParams.get("obs") === "1" || typeof (window as any).obsstudio !== "undefined";
   const isTransparentBg = urlParams.get("bg") === "transparent";
 
+  // State putaran roda
+  const [spinning, setSpinning] = useState(false);
+
   // Daftar peserta live (diperbarui otomatis dari server setiap 2 detik)
   const [livePeserta, setLivePeserta] = useState<NatalPeserta[]>(propPeserta);
   useEffect(() => {
@@ -147,8 +150,6 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
   // Urutan acak opsional untuk segmen roda
   const [shuffleOrder, setShuffleOrder] = useState<string[] | null>(null);
 
-  // State putaran roda
-  const [spinning, setSpinning] = useState(false);
   const rotationRef = useRef<number>(0); // radian
   const animFrameRef = useRef<number>(0);
   const lastTickIndexRef = useRef<number>(-1);
