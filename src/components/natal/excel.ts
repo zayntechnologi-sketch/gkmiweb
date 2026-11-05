@@ -124,6 +124,28 @@ function buildZip(files: { name: string; content: string }[]): Blob {
  * Mengunduh Daftar Hadir Natal sebagai file Excel (.xlsx) asli lengkap dengan styling header & warna status.
  */
 export function downloadDaftarHadirExcel(peserta: NatalPeserta[]) {
+  buildAndDownloadExcel(peserta, {
+    title: "DAFTAR HADIR ACARA NATAL - GKMI ICHTUS",
+    sheetName: "Daftar Hadir Natal",
+    filenamePrefix: "daftar-hadir-natal",
+  });
+}
+
+/**
+ * Mengunduh Daftar Peserta Undangan Natal sebagai file Excel (.xlsx).
+ */
+export function downloadPesertaExcel(peserta: NatalPeserta[]) {
+  buildAndDownloadExcel(peserta, {
+    title: "DAFTAR PESERTA UNDANGAN NATAL - GKMI ICHTUS",
+    sheetName: "Peserta Undangan",
+    filenamePrefix: "peserta-undangan-natal",
+  });
+}
+
+function buildAndDownloadExcel(
+  peserta: NatalPeserta[],
+  opts: { title: string; sheetName: string; filenamePrefix: string }
+) {
   const sorted = sortByNomor(peserta);
   const totalHadir = sorted.filter(p => p.hadir).length;
 
@@ -179,7 +201,7 @@ export function downloadDaftarHadirExcel(peserta: NatalPeserta[]) {
   };
 
   const rowsXml: string[] = [];
-  rowsXml.push(makeRow(1, [{ val: "DAFTAR HADIR ACARA NATAL - GKMI ICHTUS", style: 4 }]));
+  rowsXml.push(makeRow(1, [{ val: opts.title, style: 4 }]));
   rowsXml.push(makeRow(2, [{
     val: `Total Undangan: ${sorted.length} | Hadir: ${totalHadir} | Belum Hadir: ${sorted.length - totalHadir} | Diunduh: ${new Date().toLocaleString("id-ID")}`
   }]));
@@ -221,7 +243,7 @@ export function downloadDaftarHadirExcel(peserta: NatalPeserta[]) {
 
   const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="Daftar Hadir Natal" sheetId="1" r:id="rId1"/></sheets>
+  <sheets><sheet name="${escapeXml(opts.sheetName)}" sheetId="1" r:id="rId1"/></sheets>
 </workbook>`;
 
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -256,7 +278,7 @@ export function downloadDaftarHadirExcel(peserta: NatalPeserta[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `daftar-hadir-natal-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  a.download = `${opts.filenamePrefix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

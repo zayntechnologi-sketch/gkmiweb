@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, Search, QrCode, Pencil, Trash2, Printer, Download, X, Check, AlertCircle } from "lucide-react";
+import { Plus, Search, QrCode, Pencil, Trash2, Printer, Download, X, Check, AlertCircle, FileSpreadsheet } from "lucide-react";
 import { NatalPeserta } from "../../types";
 import { buildCardDataUrl, downloadDataUrl, printCards, safeFilename, sortByNomor } from "./barcode";
+import { downloadPesertaExcel } from "./excel";
 
 interface Props {
   peserta: NatalPeserta[];
@@ -134,8 +135,8 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-bold text-slate-800">Peserta Undangan ({peserta.length})</h2>
-          <div className="flex gap-2">
-            <div className="relative">
+          <div className="flex flex-wrap gap-2">
+            <div className="relative flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={search}
@@ -144,6 +145,14 @@ export default function PesertaPanel({ peserta, setPeserta, authFetch, onChanged
                 className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-red-500 sm:w-60"
               />
             </div>
+            <button
+              onClick={() => downloadPesertaExcel(filtered)}
+              disabled={filtered.length === 0}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer"
+              title="Unduh daftar peserta dalam bentuk Microsoft Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> <span>Download Excel (.xlsx)</span>
+            </button>
             <button
               onClick={() => printCards(filtered)}
               disabled={filtered.length === 0}
