@@ -13,6 +13,7 @@ import { useAdminAuth } from "./hooks/useAdminAuth";
 
 const PanitiaNatalView = lazy(() => import("./components/natal/PanitiaNatalView"));
 const PANITIA_PATH = "/panitia-natal";
+const UNDIAN_PATH = "/undian-natal";
 
 function applyThemeToRoot(theme: ThemeSettings) {
   const root = document.documentElement;
@@ -25,9 +26,10 @@ function applyThemeToRoot(theme: ThemeSettings) {
 }
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<MenuTab>(() =>
-    window.location.pathname.replace(/\/+$/, "") === PANITIA_PATH ? "panitia_natal" : "beranda"
-  );
+  const [currentTab, setCurrentTab] = useState<MenuTab>(() => {
+    const p = window.location.pathname.replace(/\/+$/, "");
+    return p === PANITIA_PATH || p === UNDIAN_PATH ? "panitia_natal" : "beranda";
+  });
   const [selectedEvent, setSelectedEvent] = useState<ChurchEvent | null>(null);
   const { user, checking, login } = useAdminAuth();
 

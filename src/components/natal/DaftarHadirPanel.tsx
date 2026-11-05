@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Search, Users, UserCheck, UserX, RefreshCw, FileSpreadsheet,
-  FileDown, Cloud, Check, Copy, ChevronDown, ChevronUp
+  FileDown, Cloud, Check, Copy, ChevronDown, ChevronUp, Sparkles
 } from "lucide-react";
 import { NatalPeserta } from "../../types";
 import { formatWaktu, sortByNomor } from "./barcode";
@@ -13,6 +13,7 @@ interface Props {
   loading: boolean;
   onRefresh: () => void;
   authFetch: (url: string, opts?: RequestInit) => Promise<Response>;
+  onOpenUndian: () => void;
 }
 
 type Filter = "semua" | "hadir" | "belum";
@@ -44,7 +45,7 @@ const APPS_SCRIPT_CODE = `function doPost(e) {
   return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
 }`;
 
-export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefresh, authFetch }: Props) {
+export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefresh, authFetch, onOpenUndian }: Props) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("semua");
 
@@ -320,6 +321,13 @@ export default function DaftarHadirPanel({ peserta, setPeserta, loading, onRefre
             </div>
             <button onClick={onRefresh} title="Muat ulang" className="rounded-xl border border-slate-300 p-2 text-slate-600 hover:bg-slate-50 cursor-pointer">
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+            <button
+              onClick={onOpenUndian}
+              title="Buka halaman Undian Doorprize Natal"
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-3.5 py-2 text-sm font-extrabold text-slate-950 shadow-sm hover:brightness-105 cursor-pointer"
+            >
+              <Sparkles className="h-4 w-4" /> Undian Natal
             </button>
             <button
               onClick={() => downloadDaftarHadirExcel(peserta)}
