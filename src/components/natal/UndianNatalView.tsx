@@ -735,7 +735,7 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
             >
               <span className="text-[10px] font-bold tracking-widest text-amber-400 uppercase">STAGE</span>
               <span className="text-xl sm:text-2xl font-black tracking-wider text-white">SPIN</span>
-              <span className="text-[10px] font-semibold text-slate-400">{activePool.length} TIKET</span>
+              <span className="text-[10px] font-semibold text-slate-400">{activePool.length} UNDANGAN</span>
             </button>
           </div>
 
