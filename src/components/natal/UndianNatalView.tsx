@@ -106,7 +106,7 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
-  const isObsUrl = urlParams.get("obs") === "1";
+  const isObsUrl = urlParams.get("obs") === "1" || typeof (window as any).obsstudio !== "undefined";
   const isTransparentBg = urlParams.get("bg") === "transparent";
 
   // Daftar peserta lokal jika dibuka langsung di OBS tanpa sesi login
@@ -450,7 +450,6 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
   }, [applyIncomingStageState, peserta]);
 
   useEffect(() => {
-    if (!projectorMode && !isObsUrl) return;
     let active = true;
     const poll = async () => {
       try {
@@ -461,12 +460,15 @@ export default function UndianNatalView({ peserta: propPeserta, authFetch, onRef
         if (Array.isArray(data.peserta) && propPeserta.length === 0) {
           setObsPeserta(data.peserta);
         }
-        if (data.state) {
+        if ((projectorMode || isObsUrl) && data.state) {
           applyIncomingStageState(data.state, list);
         }
       } catch {}
     };
     poll();
+    if (!projectorMode && !isObsUrl) {
+      return () => { active = false; };
+    }
     const timer = setInterval(poll, 1500);
     return () => {
       active = false;

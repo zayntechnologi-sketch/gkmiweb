@@ -72,10 +72,11 @@ export default function PanitiaNatalView({ onBack }: Props) {
 
   const isObsMode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("obs") === "1";
+    const isUndianPath = window.location.pathname.replace(/\/+$/, "") === "/undian-natal";
+    return params.get("obs") === "1" || isUndianPath || typeof (window as any).obsstudio !== "undefined";
   }, []);
 
-  if (isObsMode) {
+  if (isObsMode || showUndian) {
     return (
       <UndianNatalView
         peserta={peserta}
